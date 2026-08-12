@@ -3,7 +3,7 @@ import type { EmojiConfig } from '../src/config.js';
 import { computeState, emojiForState, isTerminal, managedEmojis } from '../src/state.js';
 
 const emoji: EmojiConfig = {
-  partial: 'eyes',
+  partial: '1of2',
   approved: 'white_check_mark',
   merged: 'merged',
   closed: 'x',
@@ -63,7 +63,7 @@ describe('isTerminal', () => {
 describe('emojiForState', () => {
   it('maps each state to its configured emoji', () => {
     expect(emojiForState('no_reviews', emoji)).toBeNull();
-    expect(emojiForState('partial', emoji)).toBe('eyes');
+    expect(emojiForState('partial', emoji)).toBe('1of2');
     expect(emojiForState('approved', emoji)).toBe('white_check_mark');
     expect(emojiForState('merged', emoji)).toBe('merged');
     expect(emojiForState('closed', emoji)).toBe('x');
@@ -78,14 +78,14 @@ describe('emojiForState', () => {
 describe('managedEmojis', () => {
   it('lists only the emoji the bot may touch', () => {
     expect(managedEmojis(emoji)).toEqual([
-      'eyes',
+      '1of2',
       'white_check_mark',
       'merged',
       'x',
       'sleeping',
     ]);
     expect(managedEmojis({ ...emoji, closed: null })).toEqual([
-      'eyes',
+      '1of2',
       'white_check_mark',
       'merged',
       'sleeping',

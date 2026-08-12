@@ -43,7 +43,7 @@ const envSchema = z.object({
   CLEANUP_TTL_DAYS: z.coerce.number().int().min(1).default(7),
   /** How long to keep showing "unknown" before giving up on a PR entirely. */
   UNREACHABLE_TTL_DAYS: z.coerce.number().int().min(1).default(7),
-  EMOJI_PARTIAL: emojiName.default('eyes'),
+  EMOJI_PARTIAL: emojiName.default('1of2'),
   EMOJI_APPROVED: emojiName.default('white_check_mark'),
   EMOJI_MERGED: emojiName.default('merged'),
   EMOJI_CLOSED: emojiName.default('x'),

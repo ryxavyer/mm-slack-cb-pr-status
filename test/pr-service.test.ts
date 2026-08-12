@@ -49,7 +49,7 @@ describe('PrService', () => {
       expect(pr?.state).toBe('partial');
       expect(pr?.approvals).toBe(1);
       expect(reactions.calls).toEqual([
-        { op: 'add', channel: 'C_WATCHED', timestamp: '111.1', name: 'eyes' },
+        { op: 'add', channel: 'C_WATCHED', timestamp: '111.1', name: '1of2' },
       ]);
     });
 
@@ -118,7 +118,7 @@ describe('PrService', () => {
       github.set(ref, { approvals: 1 });
       const first = await service.runCycle();
       expect(first).toMatchObject({ polled: 1, changed: 1, failed: 0 });
-      expect(reactions.calls.map((c) => c.name)).toEqual(['eyes']);
+      expect(reactions.calls.map((c) => c.name)).toEqual(['1of2']);
 
       // Nothing changed on the second cycle → no Slack traffic.
       reactions.calls.length = 0;
@@ -144,8 +144,8 @@ describe('PrService', () => {
       expect(store.findPr(ref)?.state).toBe('merged');
 
       expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
-        'add:eyes',
-        'remove:eyes',
+        'add:1of2',
+        'remove:1of2',
         'add:white_check_mark',
         'remove:white_check_mark',
         'add:merged',
@@ -163,7 +163,7 @@ describe('PrService', () => {
       expect(store.findPr(ref)?.state).toBe('partial');
       expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
         'remove:white_check_mark',
-        'add:eyes',
+        'add:1of2',
       ]);
     });
 
@@ -292,8 +292,8 @@ describe('PrService', () => {
       reactions.calls.length = 0;
       await service.runCycle();
 
-      expect(reactions.calls.map((c) => c.name)).toEqual(['eyes']);
-      expect(store.messagesForPr(store.findPr(ref)!.id)[0]?.currentReaction).toBe('eyes');
+      expect(reactions.calls.map((c) => c.name)).toEqual(['1of2']);
+      expect(store.messagesForPr(store.findPr(ref)!.id)[0]?.currentReaction).toBe('1of2');
     });
 
     it('respects a changed REQUIRED_APPROVALS on the next poll', async () => {

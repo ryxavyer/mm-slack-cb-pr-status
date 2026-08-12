@@ -24,7 +24,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     cleanupTtlMs: 7 * 24 * 60 * 60 * 1000,
     unreachableTtlMs: 7 * 24 * 60 * 60 * 1000,
     emoji: {
-      partial: 'eyes',
+      partial: '1of2',
       approved: 'white_check_mark',
       merged: 'merged',
       closed: 'x',

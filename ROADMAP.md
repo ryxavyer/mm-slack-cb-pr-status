@@ -171,7 +171,7 @@ Handle the two benign Slack errors explicitly: `already_reacted` (treat as succe
 | `WATCHED_CHANNELS`       | `C0123ABC,C0456DEF`      | Channel ID allowlist               |
 | `REQUIRED_APPROVALS`     | `2`                      | Static for v1                      |
 | `POLL_INTERVAL_SECONDS`  | `90`                     |                                    |
-| `EMOJI_PARTIAL`          | `eyes`                   | Emoji names, no colons             |
+| `EMOJI_PARTIAL`          | `1of2`                   | Emoji names, no colons             |
 | `EMOJI_APPROVED`         | `white_check_mark`       |                                    |
 | `EMOJI_MERGED`           | `merged`                 |                                    |
 | `DATABASE_PATH`          | `/data/bot.sqlite`       | Points at the Railway volume       |

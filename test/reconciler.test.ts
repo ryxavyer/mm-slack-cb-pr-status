@@ -46,10 +46,10 @@ describe('Reconciler', () => {
     const summary = await reconciler.reconcilePr(setState('partial'));
 
     expect(reactions.calls).toEqual([
-      { op: 'add', channel: 'C1', timestamp: '111.1', name: 'eyes' },
+      { op: 'add', channel: 'C1', timestamp: '111.1', name: '1of2' },
     ]);
     expect(summary.added).toBe(1);
-    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('eyes');
+    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('1of2');
   });
 
   it('swaps one managed emoji for another, remove before add', async () => {
@@ -60,7 +60,7 @@ describe('Reconciler', () => {
     const summary = await reconciler.reconcilePr(setState('approved'));
 
     expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([
-      ['remove', 'eyes'],
+      ['remove', '1of2'],
       ['add', 'white_check_mark'],
     ]);
     expect(summary).toMatchObject({ added: 1, removed: 1 });
@@ -75,7 +75,7 @@ describe('Reconciler', () => {
     // Approval revoked: partial → no_reviews.
     await reconciler.reconcilePr(setState('no_reviews'));
 
-    expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([['remove', 'eyes']]);
+    expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([['remove', '1of2']]);
     expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBeNull();
   });
 
@@ -107,19 +107,19 @@ describe('Reconciler', () => {
 
   it('treats already_reacted as success', async () => {
     store.linkMessage(pr.id, 'C1', '111.1');
-    reactions.failWith('add', 'eyes', 'already_reacted');
+    reactions.failWith('add', '1of2', 'already_reacted');
 
     const summary = await reconciler.reconcilePr(setState('partial'));
 
     expect(summary.added).toBe(1);
     expect(summary.failed).toBe(0);
-    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('eyes');
+    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('1of2');
   });
 
   it('treats no_reaction on remove as success', async () => {
     store.linkMessage(pr.id, 'C1', '111.1');
     await reconciler.reconcilePr(setState('partial'));
-    reactions.failWith('remove', 'eyes', 'no_reaction');
+    reactions.failWith('remove', '1of2', 'no_reaction');
 
     const summary = await reconciler.reconcilePr(setState('approved'));
 
@@ -130,7 +130,7 @@ describe('Reconciler', () => {
   it('untracks a message that Slack says is gone', async () => {
     store.linkMessage(pr.id, 'C1', '111.1');
     store.linkMessage(pr.id, 'C1', '222.2');
-    reactions.failWith('add', 'eyes', 'message_not_found');
+    reactions.failWith('add', '1of2', 'message_not_found');
 
     const summary = await reconciler.reconcilePr(setState('partial'));
 
@@ -141,7 +141,7 @@ describe('Reconciler', () => {
   it('untracks a message deleted mid-transition, on the remove call', async () => {
     store.linkMessage(pr.id, 'C1', '111.1');
     await reconciler.reconcilePr(setState('partial'));
-    reactions.failWith('remove', 'eyes', 'message_not_found');
+    reactions.failWith('remove', '1of2', 'message_not_found');
 
     const summary = await reconciler.reconcilePr(setState('approved'));
 
@@ -172,12 +172,12 @@ describe('Reconciler', () => {
   it('leaves the row untouched when a removal fails outright', async () => {
     store.linkMessage(pr.id, 'C1', '111.1');
     await reconciler.reconcilePr(setState('partial'));
-    reactions.failWith('remove', 'eyes', 'rate_limited');
+    reactions.failWith('remove', '1of2', 'rate_limited');
 
     const summary = await reconciler.reconcilePr(setState('merged'));
 
     expect(summary).toMatchObject({ failed: 1, added: 0, removed: 0 });
-    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('eyes');
+    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('1of2');
   });
 
   it('reports a missing custom emoji as a failure without dropping the message', async () => {
@@ -196,7 +196,7 @@ describe('Reconciler', () => {
     for (const state of ['partial', 'approved', 'merged', 'closed', 'no_reviews'] as const) {
       await reconciler.reconcilePr(setState(state));
     }
-    const managed = new Set(['eyes', 'white_check_mark', 'merged', 'x']);
+    const managed = new Set(['1of2', 'white_check_mark', 'merged', 'x']);
     expect(reactions.calls.every((c) => managed.has(c.name))).toBe(true);
   });
 

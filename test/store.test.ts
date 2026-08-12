@@ -94,8 +94,8 @@ describe('Store', () => {
     const message = store.linkMessage(pr.id, 'C1', '111.1');
     expect(message.currentReaction).toBeNull();
 
-    store.setCurrentReaction(message.id, 'eyes');
-    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('eyes');
+    store.setCurrentReaction(message.id, '1of2');
+    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('1of2');
 
     store.setCurrentReaction(message.id, null);
     expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBeNull();
