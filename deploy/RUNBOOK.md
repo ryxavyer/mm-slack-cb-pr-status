@@ -198,6 +198,7 @@ its reactions and stops tracking those PRs.
 | Every PR shows `:sleeping:` | `GITHUB_TOKEN` expired, was revoked, lost repo access, or isn't SSO-authorised. Look for `pr unreachable on github` lines — they carry the `reason` and HTTP `status`. Fix the token and the emoji correct themselves on the next poll; no restart needed |
 | `poll cycle complete` with `failed > 0` | Transient GitHub errors; check the `poll failed for pr` lines |
 | Tracked PRs forgotten after a redeploy | `DATABASE_PATH` isn't on a mounted volume |
+| `unable to open database file` at startup | The mounted volume isn't writable by the app. The container entrypoint chowns it and drops to the `node` user, so this should only appear if the platform forces a non-root user — then pre-create the mount owned by UID 1000 |
 | `previous poll cycle still running` | More tracked PRs than fit in one interval — raise `POLL_INTERVAL_SECONDS` |
 | Duplicate reaction churn | Two instances running against the same workspace |
 

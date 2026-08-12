@@ -40,12 +40,17 @@ COPY package.json ./
 ENV DATABASE_PATH=/data/bot.sqlite
 RUN mkdir -p /data && chown -R node:node /data
 
-# Run unprivileged; `node` exists in the base image.
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# No `USER node` here: the entrypoint starts as root purely to make the mounted
+# volume writable, then drops to `node` itself. Setting USER would leave the
+# process unable to create its database in a root-owned mount.
 
 # No EXPOSE: every connection this process makes is outbound (Socket Mode
 # WebSocket + GitHub REST). There is nothing to route inbound traffic to.
 
-# Exec form so the process is PID 1 and receives SIGTERM directly — the graceful
-# shutdown path depends on it.
+# Exec form throughout so the app ends up as PID 1 and receives SIGTERM directly
+# — the graceful shutdown path depends on it.
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]
