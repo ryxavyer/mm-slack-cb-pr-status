@@ -62,6 +62,54 @@ describe('PrService', () => {
       expect(reactions.calls).toEqual([]);
     });
 
+    it('tracks any channel when no channel allowlist is set', async () => {
+      // Membership is then the only gate: Slack delivers nothing for channels the
+      // bot was never added to, so teams can self-serve without a redeploy.
+      build({ watchedChannels: new Set<string>() });
+      github.set(ref, { approvals: 1 });
+
+      await service.trackLinks('C_SOME_OTHER_CHANNEL', '111.1', [ref]);
+
+      expect(store.findPr(ref)?.state).toBe('partial');
+      expect(reactions.calls.map((c) => `${c.channel}:${c.name}`)).toEqual([
+        'C_SOME_OTHER_CHANNEL:1of2',
+      ]);
+    });
+
+    it('tracks every repo when no allowlist is set', async () => {
+      const elsewhere = { owner: 'other', repo: 'thing', number: 9 };
+      github.set(elsewhere, { approvals: 2 });
+      await service.trackLinks('C_WATCHED', '111.1', [elsewhere]);
+
+      expect(store.findPr(elsewhere)?.state).toBe('approved');
+    });
+
+    it('ignores links outside the repo allowlist', async () => {
+      build({ watchedRepos: new Set(['acme/monolith']) });
+      const elsewhere = { owner: 'other', repo: 'thing', number: 9 };
+      github.set(ref, { approvals: 1 });
+      github.set(elsewhere, { approvals: 2 });
+
+      await service.trackLinks('C_WATCHED', '111.1', [ref, elsewhere]);
+
+      expect(store.findPr(ref)?.state).toBe('partial');
+      // Not tracked at all — no row, no GitHub call, and crucially no reaction,
+      // rather than the :sleeping: a 404 would have produced.
+      expect(store.findPr(elsewhere)).toBeUndefined();
+      expect(github.requests).toEqual(['acme/monolith#42']);
+      expect(reactions.calls.map((c) => c.name)).toEqual(['1of2']);
+    });
+
+    it('matches the allowlist case-insensitively', async () => {
+      build({ watchedRepos: new Set(['acme/monolith']) });
+      github.set(ref, { approvals: 2 });
+
+      // The parser lower-cases links, so `Acme/MonoLith` arrives normalised.
+      await service.trackLinks('C_WATCHED', '111.1', [ref]);
+
+      expect(store.findPr(ref)?.state).toBe('approved');
+    });
+
     it('is idempotent across re-delivery and edits of the same message', async () => {
       github.set(ref, { approvals: 2 });
       await service.trackLinks('C_WATCHED', '111.1', [ref]);
@@ -104,8 +152,81 @@ describe('PrService', () => {
 
       await service.trackLinks('C_WATCHED', '111.1', [ref, other]);
 
+      // The second link is still tracked and polled despite the first throwing.
+      expect(store.findPr(ref)?.state).toBe('no_reviews');
       expect(store.findPr(other)?.state).toBe('approved');
-      expect(reactions.calls.map((c) => c.name)).toEqual(['white_check_mark']);
+      // No reaction, though: the message also links a PR we know nothing about,
+      // so it cannot honestly be reported as approved.
+      expect(reactions.calls).toEqual([]);
+    });
+  });
+
+  describe('a message linking several PRs', () => {
+    it('carries one reaction for the least settled PR on it', async () => {
+      github.set(ref, { approvals: 2 });
+      github.set(other, { approvals: 1 });
+
+      await service.trackLinks('C_WATCHED', '111.1', [ref, other]);
+
+      // One PR approved, one partial → the message still needs eyes.
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual(['add:1of2']);
+    });
+
+    it('does not lose one PR’s status when another shares its emoji and moves on', async () => {
+      // The exact collision this design fixes: both PRs partial, so both want
+      // :1of2:, but Slack has only one reaction slot per message.
+      github.set(ref, { approvals: 1 });
+      github.set(other, { approvals: 1 });
+      await service.trackLinks('C_WATCHED', '111.1', [ref, other]);
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual(['add:1of2']);
+
+      // First PR gets approved; the second is still only partially reviewed.
+      reactions.calls.length = 0;
+      github.set(ref, { approvals: 2 });
+      await service.runCycle();
+
+      // The reaction must stay :1of2: for the PR still awaiting review, rather
+      // than being removed out from under it.
+      expect(reactions.calls).toEqual([]);
+      expect(store.messageReaction('C_WATCHED', '111.1')).toBe('1of2');
+
+      // Once both are approved, the message finally advances.
+      github.set(other, { approvals: 2 });
+      await service.runCycle();
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
+        'remove:1of2',
+        'add:white_check_mark',
+      ]);
+    });
+
+    it('hands the reaction to the surviving PR when one is retired', async () => {
+      github.set(ref, { approvals: 1 });
+      github.set(other, { merged: true, closed: true, approvals: 2 });
+      await service.trackLinks('C_WATCHED', '111.1', [ref, other]);
+      // Aggregate is partial: the merged PR does not settle the message.
+      expect(store.messageReaction('C_WATCHED', '111.1')).toBe('1of2');
+
+      // The merged PR ages out of the database entirely.
+      reactions.calls.length = 0;
+      await service.cleanup(Date.now() + config.cleanupTtlMs + 1_000);
+      await service.runCycle();
+
+      // Still :1of2: — the remaining PR keeps the message accurate.
+      expect(store.findPr(other)).toBeUndefined();
+      expect(store.messageReaction('C_WATCHED', '111.1')).toBe('1of2');
+    });
+
+    it('strips the reaction when the last PR on a message is retired', async () => {
+      github.set(ref, { approvals: 1 });
+      await service.trackLinks('C_WATCHED', '111.1', [ref]);
+
+      github.fail(ref, new PrUnreachableError(ref, 'not_found', 404));
+      await service.runCycle();
+      reactions.calls.length = 0;
+
+      await service.cleanup(Date.now() + config.unreachableTtlMs + 1_000);
+
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual(['remove:sleeping']);
     });
   });
 

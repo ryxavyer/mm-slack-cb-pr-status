@@ -21,23 +21,41 @@ const boolish = z
   })
   .transform((s) => s === 'true' || s === '1' || s === 'yes');
 
-const channelList = z
+const channelList = z.string().transform((s) =>
+  s
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0),
+);
+
+/**
+ * Optional `owner/repo` allowlist. Lower-cased to match the parser, which
+ * normalises links the same way (GitHub treats both case-insensitively).
+ */
+const repoList = z
   .string()
   .transform((s) =>
     s
       .split(',')
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0),
+      .map((r) => r.trim().toLowerCase())
+      .filter((r) => r.length > 0),
   )
-  .refine((list) => list.length > 0, {
-    message: 'must list at least one Slack channel ID (e.g. C0123ABC,C0456DEF)',
+  .refine((list) => list.every((r) => /^[a-z0-9._-]+\/[a-z0-9._-]+$/.test(r)), {
+    message: 'entries must be owner/repo (e.g. acme/monolith), comma separated',
   });
 
 const envSchema = z.object({
   SLACK_BOT_TOKEN: z.string().min(1, 'required (xoxb-… bot token)'),
   SLACK_APP_TOKEN: z.string().min(1, 'required (xapp-… app-level token)'),
   GITHUB_TOKEN: z.string().min(1, 'required (read-only Pull Requests PAT)'),
-  WATCHED_CHANNELS: channelList,
+  /**
+   * Empty means "any channel the bot has been added to" — Slack delivers no
+   * events for channels it isn't a member of, so membership is the real gate and
+   * teams can self-serve. Set it to restrict the bot to specific channels.
+   */
+  WATCHED_CHANNELS: channelList.default(''),
+  /** Empty means "any repo the GitHub token can see". */
+  WATCHED_REPOS: repoList.default(''),
   REQUIRED_APPROVALS: z.coerce.number().int().min(1).default(2),
   POLL_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(90),
   CLEANUP_TTL_DAYS: z.coerce.number().int().min(1).default(7),
@@ -70,7 +88,10 @@ export type EmojiConfig = {
 export interface Config {
   slack: { botToken: string; appToken: string };
   github: { token: string; baseUrl: string };
+  /** Empty set means every channel the bot is a member of. */
   watchedChannels: Set<string>;
+  /** Empty set means every repo is allowed. */
+  watchedRepos: Set<string>;
   requiredApprovals: number;
   pollIntervalMs: number;
   cleanupTtlMs: number;
@@ -82,6 +103,14 @@ export interface Config {
 }
 
 const orNull = (s: string): string | null => (s === '' ? null : s);
+
+/**
+ * Whether the bot should act on links in this channel. An unset allowlist means
+ * every channel it has been added to, so Slack membership alone is the gate.
+ */
+export function isWatchedChannel(config: Config, channelId: string): boolean {
+  return config.watchedChannels.size === 0 || config.watchedChannels.has(channelId);
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = envSchema.safeParse(env);
@@ -96,6 +125,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     slack: { botToken: e.SLACK_BOT_TOKEN, appToken: e.SLACK_APP_TOKEN },
     github: { token: e.GITHUB_TOKEN, baseUrl: e.GITHUB_API_BASE_URL },
     watchedChannels: new Set(e.WATCHED_CHANNELS),
+    watchedRepos: new Set(e.WATCHED_REPOS),
     requiredApprovals: e.REQUIRED_APPROVALS,
     pollIntervalMs: e.POLL_INTERVAL_SECONDS * 1000,
     cleanupTtlMs: e.CLEANUP_TTL_DAYS * 24 * 60 * 60 * 1000,

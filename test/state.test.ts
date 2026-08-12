@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { EmojiConfig } from '../src/config.js';
-import { computeState, emojiForState, isTerminal, managedEmojis } from '../src/state.js';
+import {
+  aggregateState,
+  computeState,
+  emojiForState,
+  isTerminal,
+  managedEmojis,
+} from '../src/state.js';
 
 const emoji: EmojiConfig = {
   partial: '1of2',
@@ -57,6 +63,43 @@ describe('isTerminal', () => {
 
   it('keeps polling an unknown PR so restored access self-heals it', () => {
     expect(isTerminal('unknown')).toBe(false);
+  });
+});
+
+describe('aggregateState', () => {
+  it('is that PR’s own state when a message links just one', () => {
+    const all = ['no_reviews', 'partial', 'approved', 'merged', 'closed', 'unknown'] as const;
+    for (const state of all) {
+      expect(aggregateState([state])).toBe(state);
+    }
+  });
+
+  it('reports the least settled state, so the message still asks for eyes', () => {
+    expect(aggregateState(['approved', 'no_reviews'])).toBe('no_reviews');
+    expect(aggregateState(['merged', 'partial'])).toBe('partial');
+    expect(aggregateState(['approved', 'partial'])).toBe('partial');
+    expect(aggregateState(['merged', 'closed'])).toBe('closed');
+  });
+
+  it('only reports done when every PR is done', () => {
+    expect(aggregateState(['approved', 'approved'])).toBe('approved');
+    expect(aggregateState(['merged', 'merged'])).toBe('merged');
+  });
+
+  it('lets unknown outrank everything, since we cannot vouch for the rest', () => {
+    expect(aggregateState(['merged', 'unknown'])).toBe('unknown');
+    expect(aggregateState(['approved', 'unknown'])).toBe('unknown');
+    expect(aggregateState(['no_reviews', 'unknown'])).toBe('unknown');
+  });
+
+  it('does not depend on the order the PRs come back in', () => {
+    expect(aggregateState(['no_reviews', 'approved'])).toBe(
+      aggregateState(['approved', 'no_reviews']),
+    );
+  });
+
+  it('has no state for a message with no PRs left', () => {
+    expect(aggregateState([])).toBeNull();
   });
 });
 

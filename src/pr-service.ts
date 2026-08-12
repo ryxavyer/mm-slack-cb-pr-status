@@ -1,4 +1,4 @@
-import type { Config } from './config.js';
+import { isWatchedChannel, type Config } from './config.js';
 import type { TrackedPr } from './db/schema.js';
 import type { Store } from './db/store.js';
 import { PrUnreachableError, type GitHubClient } from './github/client.js';
@@ -38,22 +38,52 @@ export class PrService {
    * converge on the same rows.
    */
   async trackLinks(channelId: string, messageTs: string, refs: PrRef[]): Promise<void> {
-    if (!this.config.watchedChannels.has(channelId)) {
+    if (!isWatchedChannel(this.config, channelId)) {
       this.logger.debug({ channel: channelId }, 'ignoring links from unwatched channel');
       return;
     }
 
+    // Link every PR before polling any of them. The reaction is an aggregate
+    // over all the PRs on a message, so polling as we go would reconcile against
+    // a half-built set — briefly showing (and paying Slack for) an emoji that the
+    // next link immediately overrides.
+    const tracked: TrackedPr[] = [];
     for (const ref of refs) {
       const log = this.logger.child({ pr: prRefKey(ref), channel: channelId, messageTs });
+
+      if (!this.isWatchedRepo(ref)) {
+        // Never tracked at all, so the message simply gets no reaction. Without
+        // this, a link to a repo the token can't see would 404 and show up as
+        // `unknown` — "I lost access" when the truth is "not my repo".
+        log.debug('ignoring pr link outside the repo allowlist');
+        continue;
+      }
+
       try {
         const pr = this.store.upsertPr(ref, this.config.requiredApprovals);
         const message = this.store.linkMessage(pr.id, channelId, messageTs);
         log.info({ prId: pr.id, messageId: message.id, state: pr.state }, 'tracking pr link');
-        await this.pollPr(pr);
+        tracked.push(pr);
       } catch (error) {
         log.error({ err: error }, 'failed to track pr link');
       }
     }
+
+    for (const pr of tracked) {
+      try {
+        await this.pollPr(pr);
+      } catch (error) {
+        this.logger
+          .child({ pr: `${pr.owner}/${pr.repo}#${pr.number}`, channel: channelId, messageTs })
+          .error({ err: error }, 'failed to poll newly tracked pr');
+      }
+    }
+  }
+
+  /** An empty `WATCHED_REPOS` allows every repo the GitHub token can see. */
+  private isWatchedRepo(ref: PrRef): boolean {
+    const allowed = this.config.watchedRepos;
+    return allowed.size === 0 || allowed.has(`${ref.owner}/${ref.repo}`);
   }
 
   /**
@@ -167,8 +197,23 @@ export class PrService {
     for (const pr of this.store.listUnreachableBefore(now - this.config.unreachableTtlMs)) {
       const log = this.logger.child({ pr: `${pr.owner}/${pr.repo}#${pr.number}`, prId: pr.id });
       try {
-        await this.reconciler.clearPr(pr);
+        // Drop the PR first, then recompute each message it was on: any other PR
+        // still linked there takes over the reaction, and a message left with no
+        // PRs simply loses it.
+        const messages = this.store.messagesForPr(pr.id).map((message) => ({
+          channelId: message.channelId,
+          messageTs: message.messageTs,
+          // Read before the delete removes the rows that hold it.
+          current: this.store.messageReaction(message.channelId, message.messageTs),
+        }));
         this.store.deletePr(pr.id);
+        for (const message of messages) {
+          await this.reconciler.reconcileMessage(
+            message.channelId,
+            message.messageTs,
+            message.current,
+          );
+        }
         retired += 1;
         log.warn(
           { unreachableSince: pr.unreachableSince },

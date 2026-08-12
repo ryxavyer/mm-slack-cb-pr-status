@@ -1,5 +1,5 @@
 import { App, LogLevel, type Logger as BoltLogger } from '@slack/bolt';
-import type { Config } from '../config.js';
+import { isWatchedChannel, type Config } from '../config.js';
 import type { Store } from '../db/store.js';
 import type { Logger } from '../logger.js';
 import type { PrService } from '../pr-service.js';
@@ -64,7 +64,7 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   });
 
   const watched = (channel: unknown): channel is string =>
-    typeof channel === 'string' && config.watchedChannels.has(channel);
+    typeof channel === 'string' && isWatchedChannel(config, channel);
 
   /**
    * Primary signal. Slack fires `link_shared` for our registered unfurl domain

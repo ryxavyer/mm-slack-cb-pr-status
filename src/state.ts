@@ -36,6 +36,38 @@ export function isTerminal(state: PrState): boolean {
 }
 
 /**
+ * Precedence for a message linking several PRs: the *least settled* state wins.
+ *
+ * A Slack reaction belongs to the message, not to any one PR, so a message with
+ * two PR links gets one emoji answering "does this message still need eyes?".
+ * If either PR is unreviewed, it does — so `no_reviews` beats `approved`.
+ *
+ * `unknown` outranks everything: if we can't see one of the PRs, we must not
+ * claim the message as a whole is approved or merged.
+ */
+const AGGREGATE_PRECEDENCE: readonly PrState[] = [
+  'unknown',
+  'no_reviews',
+  'partial',
+  'approved',
+  'closed',
+  'merged',
+];
+
+/**
+ * The single state a message reports for all the PRs linked in it. For one PR
+ * this is just that PR's state.
+ */
+export function aggregateState(states: readonly PrState[]): PrState | null {
+  if (states.length === 0) return null;
+  const present = new Set(states);
+  for (const state of AGGREGATE_PRECEDENCE) {
+    if (present.has(state)) return state;
+  }
+  return null;
+}
+
+/**
  * The single managed emoji for a state, or null when the state should carry no
  * reaction ('no_reviews', or a state whose emoji has been configured empty).
  */

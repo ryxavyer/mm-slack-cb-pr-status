@@ -30,6 +30,22 @@ describe('loadConfig', () => {
     expect([...config.watchedChannels]).toEqual(['C0123ABC', 'C0456DEF']);
   });
 
+  it('leaves the repo allowlist empty by default, meaning any repo', () => {
+    expect(loadConfig({ ...required }).watchedRepos.size).toBe(0);
+  });
+
+  it('parses and lower-cases a repo allowlist', () => {
+    const config = loadConfig({ ...required, WATCHED_REPOS: 'Acme/MonoLith, acme/other ' });
+    expect([...config.watchedRepos]).toEqual(['acme/monolith', 'acme/other']);
+  });
+
+  it('rejects a repo allowlist entry that is not owner/repo', () => {
+    expect(() => loadConfig({ ...required, WATCHED_REPOS: 'monolith' })).toThrow(/WATCHED_REPOS/);
+    expect(() => loadConfig({ ...required, WATCHED_REPOS: 'https://github.com/acme/x' })).toThrow(
+      /WATCHED_REPOS/,
+    );
+  });
+
   it('strips colons from emoji names', () => {
     const config = loadConfig({ ...required, EMOJI_APPROVED: ':shipit:' });
     expect(config.emoji.approved).toBe('shipit');
@@ -46,11 +62,9 @@ describe('loadConfig', () => {
     );
   });
 
-  it('rejects an empty channel allowlist', () => {
-    expect(() => loadConfig({ ...required, WATCHED_CHANNELS: '' })).toThrow(/WATCHED_CHANNELS/);
-    expect(() => loadConfig({ ...required, WATCHED_CHANNELS: undefined })).toThrow(
-      /WATCHED_CHANNELS/,
-    );
+  it('treats an empty channel allowlist as "any channel the bot is in"', () => {
+    expect(loadConfig({ ...required, WATCHED_CHANNELS: '' }).watchedChannels.size).toBe(0);
+    expect(loadConfig({ ...required, WATCHED_CHANNELS: undefined }).watchedChannels.size).toBe(0);
   });
 
   it('rejects nonsense numbers instead of silently defaulting', () => {

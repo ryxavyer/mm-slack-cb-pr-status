@@ -143,17 +143,41 @@ export class Store {
     return this.db.select().from(prMessages).where(eq(prMessages.prId, prId)).all();
   }
 
-  setCurrentReaction(messageId: number, reaction: string | null): void {
+  /** Every PR linked in one Slack message — usually one, sometimes several. */
+  prsForMessage(channelId: string, messageTs: string): TrackedPr[] {
+    return this.db
+      .select({ pr: trackedPrs })
+      .from(prMessages)
+      .innerJoin(trackedPrs, eq(prMessages.prId, trackedPrs.id))
+      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
+      .all()
+      .map((row) => row.pr);
+  }
+
+  /**
+   * The managed reaction currently on a Slack message.
+   *
+   * `current_reaction` is stored on every row for the message and written to all
+   * of them at once, so they agree. The one exception is a row inserted when a
+   * new PR link is added to a message that already carries a reaction — that row
+   * starts null, hence taking the first non-null value rather than the first row.
+   */
+  messageReaction(channelId: string, messageTs: string): string | null {
+    const rows = this.db
+      .select({ currentReaction: prMessages.currentReaction })
+      .from(prMessages)
+      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
+      .all();
+    return rows.find((r) => r.currentReaction !== null)?.currentReaction ?? null;
+  }
+
+  /** Records the reaction now on a message, across all of its PR links. */
+  setMessageReaction(channelId: string, messageTs: string, reaction: string | null): void {
     this.db
       .update(prMessages)
       .set({ currentReaction: reaction })
-      .where(eq(prMessages.id, messageId))
+      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
       .run();
-  }
-
-  /** Called when Slack reports the message no longer exists. */
-  deleteMessage(messageId: number): void {
-    this.db.delete(prMessages).where(eq(prMessages.id, messageId)).run();
   }
 
   /**

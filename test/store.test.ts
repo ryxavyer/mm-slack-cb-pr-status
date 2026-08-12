@@ -89,23 +89,53 @@ describe('Store', () => {
     expect(store.listActivePrs()).toHaveLength(1);
   });
 
-  it('tracks the current reaction per message', () => {
+  it('tracks the reaction currently on a message', () => {
     const pr = store.upsertPr(ref, 2);
     const message = store.linkMessage(pr.id, 'C1', '111.1');
     expect(message.currentReaction).toBeNull();
+    expect(store.messageReaction('C1', '111.1')).toBeNull();
 
-    store.setCurrentReaction(message.id, '1of2');
-    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBe('1of2');
+    store.setMessageReaction('C1', '111.1', '1of2');
+    expect(store.messageReaction('C1', '111.1')).toBe('1of2');
 
-    store.setCurrentReaction(message.id, null);
-    expect(store.messagesForPr(pr.id)[0]?.currentReaction).toBeNull();
+    store.setMessageReaction('C1', '111.1', null);
+    expect(store.messageReaction('C1', '111.1')).toBeNull();
   });
 
-  it('deletes a single message row', () => {
-    const pr = store.upsertPr(ref, 2);
-    const message = store.linkMessage(pr.id, 'C1', '111.1');
-    store.deleteMessage(message.id);
-    expect(store.messagesForPr(pr.id)).toHaveLength(0);
+  it('keeps the reaction consistent across every PR linked in a message', () => {
+    const a = store.upsertPr(ref, 2);
+    const b = store.upsertPr(other, 2);
+    store.linkMessage(a.id, 'C1', '111.1');
+    store.linkMessage(b.id, 'C1', '111.1');
+
+    store.setMessageReaction('C1', '111.1', '1of2');
+
+    expect(store.messagesForPr(a.id)[0]?.currentReaction).toBe('1of2');
+    expect(store.messagesForPr(b.id)[0]?.currentReaction).toBe('1of2');
+  });
+
+  it('reports an existing reaction even when a newly linked PR row is still null', () => {
+    const a = store.upsertPr(ref, 2);
+    store.linkMessage(a.id, 'C1', '111.1');
+    store.setMessageReaction('C1', '111.1', 'white_check_mark');
+
+    // A second PR link posted onto the same message starts with a null row.
+    const b = store.upsertPr(other, 2);
+    store.linkMessage(b.id, 'C1', '111.1');
+
+    expect(store.messageReaction('C1', '111.1')).toBe('white_check_mark');
+  });
+
+  it('lists every PR linked in a message', () => {
+    const a = store.upsertPr(ref, 2);
+    const b = store.upsertPr(other, 2);
+    store.linkMessage(a.id, 'C1', '111.1');
+    store.linkMessage(b.id, 'C1', '111.1');
+    store.linkMessage(b.id, 'C1', '222.2');
+
+    expect(store.prsForMessage('C1', '111.1').map((p) => p.number).sort()).toEqual([42, 43]);
+    expect(store.prsForMessage('C1', '222.2').map((p) => p.number)).toEqual([43]);
+    expect(store.prsForMessage('C1', 'nope')).toEqual([]);
   });
 
   it('deletes every link carried by one deleted Slack message', () => {
