@@ -9,6 +9,7 @@ import {
 } from '../src/state.js';
 
 const emoji: EmojiConfig = {
+  changesRequested: 'request-changes',
   partial: '1of2',
   approved: 'white_check_mark',
   merged: 'merged',
@@ -17,7 +18,13 @@ const emoji: EmojiConfig = {
 };
 
 describe('computeState', () => {
-  const base = { merged: false, closed: false, approvals: 0, requiredApprovals: 2 };
+  const base = {
+    merged: false,
+    closed: false,
+    approvals: 0,
+    changesRequested: 0,
+    requiredApprovals: 2,
+  };
 
   it('reports no_reviews with zero approvals', () => {
     expect(computeState(base)).toBe('no_reviews');
@@ -45,6 +52,29 @@ describe('computeState', () => {
     expect(computeState({ ...base, closed: true, approvals: 2 })).toBe('closed');
   });
 
+  it('reports changes_requested when a reviewer is blocking', () => {
+    expect(computeState({ ...base, changesRequested: 1 })).toBe('changes_requested');
+    // The case that motivated this state: one approval, one reviewer blocking.
+    expect(computeState({ ...base, approvals: 1, changesRequested: 1 })).toBe('changes_requested');
+  });
+
+  it('lets a blocking review outrank a full set of approvals', () => {
+    // Enough approvals to merge, but someone is still blocking — reporting this
+    // as approved would be actively misleading.
+    expect(computeState({ ...base, approvals: 2, changesRequested: 1 })).toBe('changes_requested');
+    expect(computeState({ ...base, approvals: 9, changesRequested: 1 })).toBe('changes_requested');
+  });
+
+  it('still lets merged and closed outrank a blocking review', () => {
+    expect(computeState({ ...base, merged: true, changesRequested: 1 })).toBe('merged');
+    expect(computeState({ ...base, closed: true, changesRequested: 1 })).toBe('closed');
+  });
+
+  it('recovers once the blocking review is resolved', () => {
+    expect(computeState({ ...base, approvals: 2, changesRequested: 1 })).toBe('changes_requested');
+    expect(computeState({ ...base, approvals: 2, changesRequested: 0 })).toBe('approved');
+  });
+
   it('moves backwards when an approval is revoked', () => {
     expect(computeState({ ...base, approvals: 2 })).toBe('approved');
     expect(computeState({ ...base, approvals: 1 })).toBe('partial');
@@ -59,6 +89,7 @@ describe('isTerminal', () => {
     expect(isTerminal('approved')).toBe(false);
     expect(isTerminal('partial')).toBe(false);
     expect(isTerminal('no_reviews')).toBe(false);
+    expect(isTerminal('changes_requested')).toBe(false);
   });
 
   it('keeps polling an unknown PR so restored access self-heals it', () => {
@@ -68,7 +99,15 @@ describe('isTerminal', () => {
 
 describe('aggregateState', () => {
   it('is that PR’s own state when a message links just one', () => {
-    const all = ['no_reviews', 'partial', 'approved', 'merged', 'closed', 'unknown'] as const;
+    const all = [
+      'no_reviews',
+      'changes_requested',
+      'partial',
+      'approved',
+      'merged',
+      'closed',
+      'unknown',
+    ] as const;
     for (const state of all) {
       expect(aggregateState([state])).toBe(state);
     }
@@ -92,6 +131,18 @@ describe('aggregateState', () => {
     expect(aggregateState(['no_reviews', 'unknown'])).toBe('unknown');
   });
 
+  it('surfaces a blocked PR rather than hiding it behind the no-emoji state', () => {
+    // `no_reviews` shows nothing, so if it won here a blocked PR would be
+    // invisible on a message that also links an unreviewed one.
+    expect(aggregateState(['no_reviews', 'changes_requested'])).toBe('changes_requested');
+    expect(aggregateState(['approved', 'changes_requested'])).toBe('changes_requested');
+    expect(aggregateState(['merged', 'changes_requested'])).toBe('changes_requested');
+  });
+
+  it('still lets unknown outrank a blocked PR', () => {
+    expect(aggregateState(['changes_requested', 'unknown'])).toBe('unknown');
+  });
+
   it('does not depend on the order the PRs come back in', () => {
     expect(aggregateState(['no_reviews', 'approved'])).toBe(
       aggregateState(['approved', 'no_reviews']),
@@ -106,6 +157,7 @@ describe('aggregateState', () => {
 describe('emojiForState', () => {
   it('maps each state to its configured emoji', () => {
     expect(emojiForState('no_reviews', emoji)).toBeNull();
+    expect(emojiForState('changes_requested', emoji)).toBe('request-changes');
     expect(emojiForState('partial', emoji)).toBe('1of2');
     expect(emojiForState('approved', emoji)).toBe('white_check_mark');
     expect(emojiForState('merged', emoji)).toBe('merged');
@@ -121,6 +173,7 @@ describe('emojiForState', () => {
 describe('managedEmojis', () => {
   it('lists only the emoji the bot may touch', () => {
     expect(managedEmojis(emoji)).toEqual([
+      'request-changes',
       '1of2',
       'white_check_mark',
       'merged',
@@ -128,6 +181,7 @@ describe('managedEmojis', () => {
       'sleeping',
     ]);
     expect(managedEmojis({ ...emoji, closed: null })).toEqual([
+      'request-changes',
       '1of2',
       'white_check_mark',
       'merged',

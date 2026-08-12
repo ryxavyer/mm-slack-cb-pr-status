@@ -58,11 +58,24 @@ export function latestReviewByReviewer(reviews: readonly ReviewLike[]): Map<stri
   return new Map([...latest].map(([key, value]) => [key, value.state]));
 }
 
+export interface ReviewSummary {
+  /** Reviewers whose current position is "approved". */
+  approvals: number;
+  /** Reviewers currently blocking the PR with a changes-requested review. */
+  changesRequested: number;
+}
+
+/** Tallies the reviewers currently for and against the PR. */
+export function summariseReviews(reviews: readonly ReviewLike[]): ReviewSummary {
+  const summary: ReviewSummary = { approvals: 0, changesRequested: 0 };
+  for (const state of latestReviewByReviewer(reviews).values()) {
+    if (state === 'APPROVED') summary.approvals += 1;
+    else if (state === 'CHANGES_REQUESTED') summary.changesRequested += 1;
+  }
+  return summary;
+}
+
 /** Number of reviewers whose current position is "approved". */
 export function countApprovals(reviews: readonly ReviewLike[]): number {
-  let approvals = 0;
-  for (const state of latestReviewByReviewer(reviews).values()) {
-    if (state === 'APPROVED') approvals += 1;
-  }
-  return approvals;
+  return summariseReviews(reviews).approvals;
 }

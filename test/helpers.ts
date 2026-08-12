@@ -25,6 +25,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     cleanupTtlMs: 7 * 24 * 60 * 60 * 1000,
     unreachableTtlMs: 7 * 24 * 60 * 60 * 1000,
     emoji: {
+      changesRequested: 'request-changes',
       partial: '1of2',
       approved: 'white_check_mark',
       merged: 'merged',
@@ -103,6 +104,7 @@ export class FakeGitHubClient implements GitHubClient {
       closed: false,
       draft: false,
       approvals: 0,
+      changesRequested: 0,
       title: 'test pr',
       ...status,
     });

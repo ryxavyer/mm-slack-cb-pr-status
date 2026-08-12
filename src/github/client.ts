@@ -1,6 +1,6 @@
 import { Octokit } from 'octokit';
 import type { PrRef } from '../types.js';
-import { countApprovals } from './reviews.js';
+import { summariseReviews } from './reviews.js';
 
 /** What a poll needs to know about a PR. */
 export interface PrStatus {
@@ -8,6 +8,8 @@ export interface PrStatus {
   closed: boolean;
   draft: boolean;
   approvals: number;
+  /** Reviewers currently blocking the PR with a changes-requested review. */
+  changesRequested: number;
   title: string;
 }
 
@@ -131,7 +133,7 @@ export class OctokitGitHubClient implements GitHubClient {
         merged: Boolean(pr.merged ?? pr.merged_at),
         closed: pr.state === 'closed',
         draft: Boolean(pr.draft),
-        approvals: countApprovals(reviews),
+        ...summariseReviews(reviews),
         title: pr.title ?? '',
       };
     } catch (error) {

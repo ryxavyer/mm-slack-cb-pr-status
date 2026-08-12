@@ -273,6 +273,41 @@ describe('PrService', () => {
       ]);
     });
 
+    it('swaps to the blocked emoji when a reviewer requests changes', async () => {
+      github.set(ref, { approvals: 1 });
+      await service.trackLinks('C_WATCHED', '111.1', [ref]);
+      reactions.calls.length = 0;
+
+      // A second reviewer blocks: one approval, one changes-requested.
+      github.set(ref, { approvals: 1, changesRequested: 1 });
+      await service.runCycle();
+
+      expect(store.findPr(ref)?.state).toBe('changes_requested');
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
+        'remove:1of2',
+        'add:request-changes',
+      ]);
+
+      // Author addresses it, reviewer approves: straight to fully approved.
+      reactions.calls.length = 0;
+      github.set(ref, { approvals: 2, changesRequested: 0 });
+      await service.runCycle();
+
+      expect(store.findPr(ref)?.state).toBe('approved');
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
+        'remove:request-changes',
+        'add:white_check_mark',
+      ]);
+    });
+
+    it('shows blocked even when the PR already has enough approvals', async () => {
+      github.set(ref, { approvals: 2, changesRequested: 1 });
+      await service.trackLinks('C_WATCHED', '111.1', [ref]);
+
+      expect(store.findPr(ref)?.state).toBe('changes_requested');
+      expect(reactions.calls.map((c) => c.name)).toEqual(['request-changes']);
+    });
+
     it('walks backwards when an approval is revoked', async () => {
       github.set(ref, { approvals: 2 });
       await service.trackLinks('C_WATCHED', '111.1', [ref]);

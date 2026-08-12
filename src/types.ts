@@ -6,6 +6,7 @@
  */
 export const PR_STATES = [
   'no_reviews',
+  'changes_requested',
   'partial',
   'approved',
   'merged',

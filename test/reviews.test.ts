@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { countApprovals, latestReviewByReviewer, type ReviewLike } from '../src/github/reviews.js';
+import {
+  countApprovals,
+  latestReviewByReviewer,
+  summariseReviews,
+  type ReviewLike,
+} from '../src/github/reviews.js';
 
 const review = (id: number, state: string, submitted_at: string): ReviewLike => ({
   user: { id, login: `user${id}` },
@@ -93,6 +98,50 @@ describe('countApprovals', () => {
   it('handles lowercase states and an empty list', () => {
     expect(countApprovals([review(1, 'approved', '2026-08-01T10:00:00Z')])).toBe(1);
     expect(countApprovals([])).toBe(0);
+  });
+});
+
+describe('summariseReviews', () => {
+  it('counts approvals and blocking reviews side by side', () => {
+    // One reviewer approved, another wants changes — the case that drives the
+    // changes_requested state.
+    expect(
+      summariseReviews([
+        review(1, 'APPROVED', '2026-08-01T10:00:00Z'),
+        review(2, 'CHANGES_REQUESTED', '2026-08-01T11:00:00Z'),
+      ]),
+    ).toEqual({ approvals: 1, changesRequested: 1 });
+  });
+
+  it('counts only each reviewer’s latest position', () => {
+    expect(
+      summariseReviews([
+        review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z'),
+        review(1, 'APPROVED', '2026-08-01T12:00:00Z'),
+      ]),
+    ).toEqual({ approvals: 1, changesRequested: 0 });
+  });
+
+  it('does not let a later comment clear a blocking review', () => {
+    expect(
+      summariseReviews([
+        review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z'),
+        review(1, 'COMMENTED', '2026-08-01T12:00:00Z'),
+      ]),
+    ).toEqual({ approvals: 0, changesRequested: 1 });
+  });
+
+  it('clears a blocking review that was dismissed', () => {
+    expect(
+      summariseReviews([
+        review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z'),
+        review(1, 'DISMISSED', '2026-08-01T12:00:00Z'),
+      ]),
+    ).toEqual({ approvals: 0, changesRequested: 0 });
+  });
+
+  it('is all zeros for no reviews', () => {
+    expect(summariseReviews([])).toEqual({ approvals: 0, changesRequested: 0 });
   });
 });
 

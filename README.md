@@ -7,6 +7,7 @@ a glance what still needs eyes, without anyone managing reactions by hand.
 | PR state             | Condition                                    | Reaction             |
 | -------------------- | -------------------------------------------- | -------------------- |
 | No reviews           | 0 approvals                                  | *(none)*             |
+| Changes requested    | any reviewer blocking (outranks approvals)   | `:request-changes:`  |
 | Partially reviewed   | 1 approval (of 2 required)                   | `:1of2:`             |
 | Fully approved       | approvals ≥ required                         | `:white_check_mark:` |
 | Merged               | PR merged                                    | `:merged:` (custom)  |
@@ -26,6 +27,5 @@ Setup, configuration and operations live in
   stay as the fallback reconciler).
 - Reading the required-approval count from branch protection rules instead of the
   `REQUIRED_APPROVALS` env var.
-- "Changes requested" as its own emoji state.
 - A nudge reply when a PR sits unreviewed for more than N hours.
 - A `/pr-status` slash command listing tracked open PRs.

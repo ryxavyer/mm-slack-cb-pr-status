@@ -107,6 +107,7 @@ export class PrService {
         merged: status.merged,
         closed: status.closed,
         approvals: status.approvals,
+        changesRequested: status.changesRequested,
         requiredApprovals,
       });
       approvals = status.approvals;

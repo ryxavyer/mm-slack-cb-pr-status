@@ -16,6 +16,7 @@ describe('loadConfig', () => {
     expect(config.cleanupTtlMs).toBe(7 * 24 * 60 * 60 * 1000);
     expect(config.databasePath).toBe('/data/bot.sqlite');
     expect(config.emoji).toEqual({
+      changesRequested: 'request-changes',
       partial: '1of2',
       approved: 'white_check_mark',
       merged: 'merged',

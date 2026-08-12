@@ -5,21 +5,29 @@ export interface StateInput {
   merged: boolean;
   closed: boolean;
   approvals: number;
+  /** Reviewers currently blocking with a changes-requested review. */
+  changesRequested: number;
   requiredApprovals: number;
 }
 
 /**
- * The state machine. Order matters: a merged PR is merged regardless of how many
- * approvals it collected, and a closed PR outranks its review state too.
+ * The state machine. Order matters:
+ * - A merged PR is merged regardless of how many approvals it collected, and a
+ *   closed PR outranks its review state too.
+ * - An outstanding changes-requested review outranks *any* approval count. Two
+ *   approvals plus one reviewer blocking is not ready to merge, and showing it
+ *   as approved would be actively misleading.
  */
 export function computeState({
   merged,
   closed,
   approvals,
+  changesRequested,
   requiredApprovals,
 }: StateInput): PrState {
   if (merged) return 'merged';
   if (closed) return 'closed';
+  if (changesRequested > 0) return 'changes_requested';
   if (approvals >= requiredApprovals) return 'approved';
   if (approvals > 0) return 'partial';
   return 'no_reviews';
@@ -36,17 +44,21 @@ export function isTerminal(state: PrState): boolean {
 }
 
 /**
- * Precedence for a message linking several PRs: the *least settled* state wins.
+ * Precedence for a message linking several PRs: whichever state most deserves
+ * attention wins.
  *
  * A Slack reaction belongs to the message, not to any one PR, so a message with
- * two PR links gets one emoji answering "does this message still need eyes?".
- * If either PR is unreviewed, it does — so `no_reviews` beats `approved`.
+ * two PR links gets one emoji answering "what does this message need?". If
+ * either PR is unreviewed, it needs eyes — so `no_reviews` beats `approved`.
  *
  * `unknown` outranks everything: if we can't see one of the PRs, we must not
- * claim the message as a whole is approved or merged.
+ * claim the message as a whole is approved or merged. `changes_requested` comes
+ * next, ahead of `no_reviews`, because a blocked PR is worth showing rather than
+ * hiding behind the no-emoji state.
  */
 const AGGREGATE_PRECEDENCE: readonly PrState[] = [
   'unknown',
+  'changes_requested',
   'no_reviews',
   'partial',
   'approved',
@@ -75,6 +87,8 @@ export function emojiForState(state: PrState, emoji: EmojiConfig): string | null
   switch (state) {
     case 'no_reviews':
       return null;
+    case 'changes_requested':
+      return emoji.changesRequested;
     case 'partial':
       return emoji.partial;
     case 'approved':
@@ -93,7 +107,14 @@ export function emojiForState(state: PrState, emoji: EmojiConfig): string | null
  * managed set; the bot never adds or removes anything outside it.
  */
 export function managedEmojis(emoji: EmojiConfig): string[] {
-  return [emoji.partial, emoji.approved, emoji.merged, emoji.closed, emoji.unknown].filter(
+  return [
+    emoji.changesRequested,
+    emoji.partial,
+    emoji.approved,
+    emoji.merged,
+    emoji.closed,
+    emoji.unknown,
+  ].filter(
     (e): e is string => e !== null,
   );
 }
