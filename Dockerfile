@@ -32,9 +32,13 @@ COPY package.json ./
 
 # DATABASE_PATH is the only filesystem touchpoint. Mount a volume here (Railway
 # volume, EBS-backed path, docker -v …) or the database is lost on restart.
+#
+# Deliberately no VOLUME instruction: Railway's builder rejects it, and it buys
+# nothing here. Its only effect is to auto-create an *anonymous* volume when the
+# operator forgets to mount one — which hides the mistake rather than surfacing
+# it. Mount explicitly instead; see deploy/RUNBOOK.md.
 ENV DATABASE_PATH=/data/bot.sqlite
 RUN mkdir -p /data && chown -R node:node /data
-VOLUME ["/data"]
 
 # Run unprivileged; `node` exists in the base image.
 USER node
