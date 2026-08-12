@@ -63,23 +63,34 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
     logger: boltLogger(logger, LogLevel.INFO),
   });
 
-  const watched = (channel: unknown): channel is string =>
-    typeof channel === 'string' && isWatchedChannel(config, channel);
+  /**
+   * Logs the drop rather than returning silently: "the event was filtered" and
+   * "no event ever arrived" are otherwise indistinguishable in the logs, which
+   * is exactly the question you need answered when nothing happens.
+   */
+  const watched = (channel: unknown, source: string): channel is string => {
+    if (typeof channel !== 'string') return false;
+    if (isWatchedChannel(config, channel)) return true;
+    logger.debug({ channel, source }, 'ignoring event from unwatched channel');
+    return false;
+  };
 
   /**
    * Primary signal. Slack fires `link_shared` for our registered unfurl domain
    * (github.com) in channels the bot is a member of.
    */
   app.event('link_shared', async ({ event }) => {
-    if (!watched(event.channel)) return;
+    if (!watched(event.channel, 'link_shared')) return;
     const messageTs = event.message_ts;
     if (typeof messageTs !== 'string') return;
 
     const urls = (event.links ?? []).map((link) => link.url ?? '').join('\n');
     const refs = parsePrLinks(urls);
+    logger.debug(
+      { channel: event.channel, messageTs, links: urls, prCount: refs.length },
+      'link_shared received',
+    );
     if (refs.length === 0) return;
-
-    logger.debug({ channel: event.channel, messageTs, count: refs.length }, 'link_shared received');
     await service.trackLinks(event.channel, messageTs, refs);
   });
 
@@ -92,7 +103,7 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   if (config.enableMessageScan) {
     app.event('message', async ({ event }) => {
       const raw = event as unknown as Record<string, unknown>;
-      if (!watched(raw.channel)) return;
+      if (!watched(raw.channel, 'message')) return;
 
       if (raw.subtype === 'message_deleted') {
         const previous = raw.previous_message as Record<string, unknown> | undefined;
@@ -110,12 +121,11 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
       if (!message) return;
 
       const refs = parsePrLinks(message.text);
-      if (refs.length === 0) return;
-
       logger.debug(
-        { channel: raw.channel, messageTs: message.ts, count: refs.length },
-        'pr links found in message text',
+        { channel: raw.channel, messageTs: message.ts, prCount: refs.length },
+        'message received',
       );
+      if (refs.length === 0) return;
       await service.trackLinks(raw.channel as string, message.ts, refs);
     });
   }
