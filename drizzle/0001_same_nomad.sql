@@ -1,0 +1,1 @@
+ALTER TABLE `tracked_prs` ADD `unreachable_since` integer;

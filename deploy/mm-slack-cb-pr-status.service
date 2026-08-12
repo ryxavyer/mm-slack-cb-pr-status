@@ -1,0 +1,52 @@
+# systemd unit for running the bot directly on a VM (EC2, a VPS, a homelab box).
+# Install:
+#   sudo cp deploy/mm-slack-cb-pr-status.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now mm-slack-cb-pr-status
+# See deploy/RUNBOOK.md for the full host provisioning steps.
+
+[Unit]
+Description=mm-slack-cb-pr-status — Slack PR review-status bot
+Documentation=https://github.com/your-org/mm-slack-cb-pr-status
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mmbot
+Group=mmbot
+WorkingDirectory=/opt/mm-slack-cb-pr-status
+
+# Secrets live in a root-owned file, not in this unit (which is world-readable).
+#   sudo install -m 0640 -o root -g mmbot .env /etc/mm-slack-cb-pr-status.env
+EnvironmentFile=/etc/mm-slack-cb-pr-status.env
+Environment=NODE_ENV=production
+Environment=DATABASE_PATH=/var/lib/mm-slack-cb-pr-status/bot.sqlite
+
+ExecStart=/usr/bin/node /opt/mm-slack-cb-pr-status/dist/index.js
+
+# The app handles SIGTERM: it closes the socket, drains the in-flight poll cycle
+# and closes SQLite cleanly. Give it room to finish before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Restart=always
+RestartSec=5
+
+# Logs go to stdout/stderr as JSON; journald picks them up.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mm-slack-cb-pr-status
+
+# Hardening. StateDirectory creates and owns /var/lib/mm-slack-cb-pr-status.
+StateDirectory=mm-slack-cb-pr-status
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
