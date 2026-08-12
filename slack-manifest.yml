@@ -1,8 +1,6 @@
-# api.slack.com/apps → Create New App → From a manifest.
 display_information:
   name: CB PR Status
   description: Keeps an emoji on GitHub PR links for review states at a glance
-  background_color: "#1f2933"
   long_description: >-
     Watches review channels for GitHub pull request links, maintains a single
     status reaction on each message, and updates it as the PR progresses.
@@ -20,7 +18,6 @@ oauth_config:
     bot:
       - links:read
       - reactions:write
-      - reactions:read
       - channels:history
       - groups:history
 
