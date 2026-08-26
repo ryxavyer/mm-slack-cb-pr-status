@@ -4,6 +4,7 @@ import type { Store } from './db/store.js';
 import { PrUnreachableError, type GitHubClient } from './github/client.js';
 import type { Logger } from './logger.js';
 import type { Reconciler } from './reconciler.js';
+import { parseGroupMentions } from './slack/parse-mentions.js';
 import { computeState } from './state.js';
 import { prRefKey, type PrRef, type PrState } from './types.js';
 
@@ -36,8 +37,11 @@ export class PrService {
    *
    * Idempotent: re-delivered events, message edits and duplicate links all
    * converge on the same rows.
+   *
+   * `messageText` is used to extract Slack user group mentions for team resolution.
+   * When null (link_shared path), only the channel config fallback is used.
    */
-  async trackLinks(channelId: string, messageTs: string, refs: PrRef[]): Promise<void> {
+  async trackLinks(channelId: string, messageTs: string, refs: PrRef[], messageText: string | null = null): Promise<void> {
     if (!isWatchedChannel(this.config, channelId)) {
       this.logger.debug({ channel: channelId }, 'ignoring links from unwatched channel');
       return;
@@ -69,6 +73,8 @@ export class PrService {
       }
     }
 
+    this.resolveMessageTeam(channelId, messageTs, messageText);
+
     for (const pr of tracked) {
       try {
         await this.pollPr(pr);
@@ -76,6 +82,37 @@ export class PrService {
         this.logger
           .child({ pr: `${pr.owner}/${pr.repo}#${pr.number}`, channel: channelId, messageTs })
           .error({ err: error }, 'failed to poll newly tracked pr');
+      }
+    }
+  }
+
+  /**
+   * Determines the GitHub team slug for a message and persists it.
+   *
+   * Group mentions in message text take priority (always overwrite).
+   * Channel config is a lower-priority fallback that only writes when no value
+   * exists yet, so a later message event with a mention can still override a
+   * link_shared event that set the channel default first.
+   */
+  private resolveMessageTeam(channelId: string, messageTs: string, messageText: string | null): void {
+    if (!this.config.teamMap) return;
+    const { channels, groups } = this.config.teamMap;
+
+    if (messageText !== null) {
+      // Text is available: collect all mentioned groups that map to known teams,
+      // then fall back to the channel's team if none matched.
+      const mentions = parseGroupMentions(messageText);
+      const mentionTeams = mentions.map((h) => groups.get(h)).filter((t): t is string => t !== undefined);
+      const teams = mentionTeams.length > 0 ? mentionTeams : channels.has(channelId) ? [channels.get(channelId)!] : [];
+      if (teams.length > 0) {
+        // Overwrite: message-derived value is authoritative.
+        this.store.setMessageRequiredTeams(channelId, messageTs, teams);
+      }
+    } else {
+      // No text (link_shared): use channel config only if nothing is set yet.
+      const team = channels.get(channelId);
+      if (team) {
+        this.store.initMessageRequiredTeams(channelId, messageTs, [team]);
       }
     }
   }
@@ -100,6 +137,7 @@ export class PrService {
     const requiredApprovals = this.config.requiredApprovals;
     let state: PrState;
     let approvals: number;
+    let codeownerStatus: string | null | undefined = undefined; // undefined = keep existing
 
     try {
       const status = await this.github.fetchPrStatus(ref);
@@ -111,6 +149,11 @@ export class PrService {
         requiredApprovals,
       });
       approvals = status.approvals;
+
+      if (this.config.teamMap) {
+        const co = await this.github.fetchCodeownerStatus(ref, this.config.teamMap.botLogin);
+        codeownerStatus = co ? JSON.stringify(co) : null;
+      }
     } catch (error) {
       if (!(error instanceof PrUnreachableError)) throw error;
 
@@ -128,12 +171,9 @@ export class PrService {
       }
     }
 
-    const changed = state !== pr.state || approvals !== pr.approvals;
-    const updated = this.store.recordPoll(pr.id, {
-      state,
-      approvals,
-      requiredApprovals,
-    }) ?? { ...pr, state, approvals };
+    const pollResult = { state, approvals, requiredApprovals, ...(codeownerStatus !== undefined && { codeownerStatus }) };
+    const changed = state !== pr.state || approvals !== pr.approvals || (codeownerStatus !== undefined && codeownerStatus !== pr.codeownerStatus);
+    const updated = this.store.recordPoll(pr.id, pollResult) ?? { ...pr, state, approvals };
 
     if (state !== pr.state) {
       log.info(

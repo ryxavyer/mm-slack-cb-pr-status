@@ -1,5 +1,6 @@
 import type { EmojiConfig } from './config.js';
-import type { PrState } from './types.js';
+import type { TrackedPr } from './db/schema.js';
+import type { CodeownerStatus, PrState } from './types.js';
 
 export interface StateInput {
   merged: boolean;
@@ -31,6 +32,61 @@ export function computeState({
   if (approvals >= requiredApprovals) return 'approved';
   if (approvals > 0) return 'partial';
   return 'no_reviews';
+}
+
+/**
+ * Determines the emoji state for a PR from the perspective of a specific Slack
+ * message, incorporating codeowner status when available.
+ *
+ * When `teamSlug` is provided (channel or mention resolved to a team):
+ *   - All requirements mentioning that team satisfied + minimum met → approved
+ *   - All requirements mentioning that team satisfied + minimum not met → partial
+ *   - Any requirement mentioning that team unsatisfied → no_reviews
+ *   - Team not in any requirement (PR doesn't touch their files) → global logic
+ *
+ * Without `teamSlug` (global PR-centric view):
+ *   - All requirements satisfied + minimum met → approved
+ *   - All requirements satisfied + minimum not met → partial
+ *   - Any requirement unsatisfied → no_reviews
+ *   - No requirements → fall back to pr.state
+ *
+ * Terminal and blocking states (merged, closed, unknown, changes_requested)
+ * always pass through unchanged regardless of codeowner context.
+ */
+export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState {
+  if (
+    pr.state === 'merged' ||
+    pr.state === 'closed' ||
+    pr.state === 'unknown' ||
+    pr.state === 'changes_requested'
+  ) {
+    return pr.state;
+  }
+
+  if (!pr.codeownerStatus) return pr.state;
+
+  let status: CodeownerStatus;
+  try {
+    status = JSON.parse(pr.codeownerStatus) as CodeownerStatus;
+  } catch {
+    return pr.state;
+  }
+
+  if (status.allSatisfied) return 'approved';
+
+  const applyGlobal = (): PrState => {
+    if (status.requirements.length === 0) return pr.state;
+    if (!status.requirements.every((r) => r.satisfied)) return 'no_reviews';
+    return status.minimum === null || status.minimum.met ? 'approved' : 'partial';
+  };
+
+  if (!teamSlug) return applyGlobal();
+
+  const teamReqs = status.requirements.filter((r) => r.teams.includes(teamSlug));
+  if (teamReqs.length === 0) return applyGlobal();
+
+  if (!teamReqs.every((r) => r.satisfied)) return 'no_reviews';
+  return status.minimum === null || status.minimum.met ? 'approved' : 'partial';
 }
 
 /**

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, lt, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, notInArray } from 'drizzle-orm';
 import type { PrRef, PrState } from '../types.js';
 import type { Db } from './client.js';
 import { prMessages, trackedPrs, type PrMessage, type TrackedPr } from './schema.js';
@@ -9,6 +9,8 @@ export interface PollResult {
   state: PrState;
   approvals: number;
   requiredApprovals: number;
+  /** JSON-serialized CodeownerStatus. Undefined = leave the existing value untouched. */
+  codeownerStatus?: string | null;
 }
 
 /**
@@ -73,6 +75,56 @@ export class Store {
     return existing;
   }
 
+  /**
+   * Sets requiredTeams on every row for a message, overwriting any prior value.
+   * Stored as a JSON array so multiple teams can be tracked per message.
+   * Used when message text is available and group mentions or channel config
+   * resolve to teams (highest-priority signal).
+   */
+  setMessageRequiredTeams(channelId: string, messageTs: string, teams: string[]): void {
+    this.db
+      .update(prMessages)
+      .set({ requiredTeam: JSON.stringify(teams) })
+      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
+      .run();
+  }
+
+  /**
+   * Sets requiredTeams only when the rows have no value yet.
+   * Used when message text is unavailable (link_shared) so that a subsequent
+   * message event carrying explicit mentions can still override.
+   */
+  initMessageRequiredTeams(channelId: string, messageTs: string, teams: string[]): void {
+    this.db
+      .update(prMessages)
+      .set({ requiredTeam: JSON.stringify(teams) })
+      .where(
+        and(
+          eq(prMessages.channelId, channelId),
+          eq(prMessages.messageTs, messageTs),
+          isNull(prMessages.requiredTeam),
+        ),
+      )
+      .run();
+  }
+
+  /** The resolved GitHub team slugs for a message. Empty array if none set. */
+  messageRequiredTeams(channelId: string, messageTs: string): string[] {
+    const row = this.db
+      .select({ requiredTeam: prMessages.requiredTeam })
+      .from(prMessages)
+      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
+      .limit(1)
+      .get();
+    if (!row?.requiredTeam) return [];
+    try {
+      const parsed = JSON.parse(row.requiredTeam);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return [row.requiredTeam];
+    }
+  }
+
   getPr(id: number): TrackedPr | undefined {
     return this.db.select().from(trackedPrs).where(eq(trackedPrs.id, id)).get();
   }
@@ -119,16 +171,19 @@ export class Store {
     const unreachableSince =
       result.state === 'unknown' ? (existing?.unreachableSince ?? now) : null;
 
+    const set: Parameters<ReturnType<typeof this.db.update>['set']>[0] = {
+      state: result.state,
+      approvals: result.approvals,
+      requiredApprovals: result.requiredApprovals,
+      lastPolledAt: now,
+      closedAt,
+      unreachableSince,
+    };
+    if ('codeownerStatus' in result) set.codeownerStatus = result.codeownerStatus ?? null;
+
     return this.db
       .update(trackedPrs)
-      .set({
-        state: result.state,
-        approvals: result.approvals,
-        requiredApprovals: result.requiredApprovals,
-        lastPolledAt: now,
-        closedAt,
-        unreachableSince,
-      })
+      .set(set)
       .where(eq(trackedPrs.id, id))
       .returning()
       .get();

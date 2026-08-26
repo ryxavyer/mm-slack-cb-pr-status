@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 /**
@@ -76,7 +77,18 @@ const envSchema = z.object({
    * also scan plain message text by default. Both paths are idempotent upserts.
    */
   ENABLE_MESSAGE_SCAN: boolish.default('true'),
+  /** Path to the JSON file mapping Slack channels/groups to GitHub team slugs. */
+  TEAM_MAP_FILE: z.string().optional(),
 });
+
+export interface TeamMap {
+  /** GitHub login of the codeowner bot that posts status comments. */
+  botLogin: string;
+  /** Slack channel ID → GitHub team slug. */
+  channels: Map<string, string>;
+  /** Slack user group handle (lowercase) → GitHub team slug. */
+  groups: Map<string, string>;
+}
 
 export type EmojiConfig = {
   changesRequested: string | null;
@@ -102,6 +114,49 @@ export interface Config {
   databasePath: string;
   logLevel: string;
   enableMessageScan: boolean;
+  /** Null when TEAM_MAP_FILE is not set — disables codeowner-aware emoji. */
+  teamMap: TeamMap | null;
+}
+
+function loadTeamMap(filePath: string): TeamMap {
+  let raw: string;
+  try {
+    raw = readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    throw new Error(`TEAM_MAP_FILE: cannot read file at ${filePath}: ${(err as Error).message}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`TEAM_MAP_FILE: ${filePath} is not valid JSON`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('TEAM_MAP_FILE: root value must be a JSON object');
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj['botLogin'] !== 'string' || !obj['botLogin']) {
+    throw new Error('TEAM_MAP_FILE: "botLogin" must be a non-empty string');
+  }
+
+  const channels = new Map<string, string>();
+  if (obj['channels'] && typeof obj['channels'] === 'object' && !Array.isArray(obj['channels'])) {
+    for (const [k, v] of Object.entries(obj['channels'] as Record<string, unknown>)) {
+      if (typeof v === 'string' && v) channels.set(k, v);
+    }
+  }
+
+  const groups = new Map<string, string>();
+  if (obj['groups'] && typeof obj['groups'] === 'object' && !Array.isArray(obj['groups'])) {
+    for (const [k, v] of Object.entries(obj['groups'] as Record<string, unknown>)) {
+      if (typeof v === 'string' && v) groups.set(k.toLowerCase(), v);
+    }
+  }
+
+  return { botLogin: obj['botLogin'], channels, groups };
 }
 
 const orNull = (s: string): string | null => (s === '' ? null : s);
@@ -143,5 +198,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databasePath: e.DATABASE_PATH,
     logLevel: e.LOG_LEVEL,
     enableMessageScan: e.ENABLE_MESSAGE_SCAN,
+    teamMap: e.TEAM_MAP_FILE ? loadTeamMap(e.TEAM_MAP_FILE) : null,
   };
 }

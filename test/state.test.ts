@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { EmojiConfig } from '../src/config.js';
+import type { TrackedPr } from '../src/db/schema.js';
+import type { CodeownerStatus } from '../src/types.js';
 import {
   aggregateState,
+  computeCodeownerState,
   computeState,
   emojiForState,
   isTerminal,
@@ -167,6 +170,149 @@ describe('emojiForState', () => {
 
   it('treats an unset emoji as "no reaction for this state"', () => {
     expect(emojiForState('closed', { ...emoji, closed: null })).toBeNull();
+  });
+});
+
+describe('computeCodeownerState', () => {
+  function makePr(state: TrackedPr['state'], codeownerStatus?: CodeownerStatus | null): TrackedPr {
+    return {
+      id: 1,
+      owner: 'acme',
+      repo: 'repo',
+      number: 1,
+      state,
+      approvals: 0,
+      requiredApprovals: 2,
+      lastPolledAt: null,
+      createdAt: Date.now(),
+      closedAt: null,
+      unreachableSince: null,
+      codeownerStatus: codeownerStatus !== undefined ? JSON.stringify(codeownerStatus) : null,
+    };
+  }
+
+  const andStatus = (teams: string[], satisfied: boolean): CodeownerStatus => ({
+    requirements: [{ teams, satisfied }],
+    minimum: null,
+    allSatisfied: satisfied,
+  });
+
+  it('passes terminal states through unchanged regardless of codeowner data', () => {
+    const status: CodeownerStatus = { requirements: [], minimum: null, allSatisfied: false };
+    expect(computeCodeownerState(makePr('merged', status))).toBe('merged');
+    expect(computeCodeownerState(makePr('closed', status))).toBe('closed');
+    expect(computeCodeownerState(makePr('unknown', status))).toBe('unknown');
+    expect(computeCodeownerState(makePr('changes_requested', status))).toBe('changes_requested');
+  });
+
+  it('falls back to pr.state when no codeowner data exists', () => {
+    expect(computeCodeownerState(makePr('partial'))).toBe('partial');
+    expect(computeCodeownerState(makePr('approved'))).toBe('approved');
+  });
+
+  it('returns approved when allSatisfied is true', () => {
+    const status: CodeownerStatus = { requirements: [], minimum: null, allSatisfied: true };
+    expect(computeCodeownerState(makePr('no_reviews', status))).toBe('approved');
+  });
+
+  describe('global PR-centric mode (no teamSlug)', () => {
+    it('returns no_reviews when any requirement is unsatisfied', () => {
+      const status: CodeownerStatus = {
+        requirements: [
+          { teams: ['creator-team'], satisfied: true },
+          { teams: ['platform-team'], satisfied: false },
+        ],
+        minimum: null,
+        allSatisfied: false,
+      };
+      expect(computeCodeownerState(makePr('approved', status))).toBe('no_reviews');
+    });
+
+    it('returns approved when all satisfied and no minimum constraint', () => {
+      const status: CodeownerStatus = {
+        requirements: [
+          { teams: ['creator-team'], satisfied: true },
+          { teams: ['platform-team'], satisfied: true },
+        ],
+        minimum: null,
+        allSatisfied: true,
+      };
+      expect(computeCodeownerState(makePr('no_reviews', status))).toBe('approved');
+    });
+
+    it('returns partial when all codeowner requirements met but minimum count not', () => {
+      const status: CodeownerStatus = {
+        requirements: [{ teams: ['viewer-team'], satisfied: true }],
+        minimum: { required: 2, found: 1, met: false },
+        allSatisfied: false,
+      };
+      expect(computeCodeownerState(makePr('partial', status))).toBe('partial');
+    });
+
+    it('falls back to pr.state when requirements array is empty', () => {
+      const status: CodeownerStatus = { requirements: [], minimum: null, allSatisfied: false };
+      expect(computeCodeownerState(makePr('partial', status))).toBe('partial');
+    });
+  });
+
+  describe('channel-specific mode (with teamSlug)', () => {
+    it('returns no_reviews when the team requirement is unsatisfied', () => {
+      expect(
+        computeCodeownerState(makePr('partial', andStatus(['creator-team'], false)), 'creator-team'),
+      ).toBe('no_reviews');
+    });
+
+    it('returns approved when the team requirement is satisfied and minimum is met', () => {
+      expect(
+        computeCodeownerState(makePr('no_reviews', andStatus(['creator-team'], true)), 'creator-team'),
+      ).toBe('approved');
+    });
+
+    it('returns partial when team is done but minimum count is not met', () => {
+      const status: CodeownerStatus = {
+        requirements: [{ teams: ['viewer-team'], satisfied: true }],
+        minimum: { required: 2, found: 1, met: false },
+        allSatisfied: false,
+      };
+      expect(computeCodeownerState(makePr('partial', status), 'viewer-team')).toBe('partial');
+    });
+
+    it('returns approved for creator-team when only its OR group requirement is satisfied', () => {
+      // Example 3: creator-team only appears in the OR group, which is satisfied
+      const status: CodeownerStatus = {
+        requirements: [
+          { teams: ['design-system-stewards'], satisfied: false },
+          { teams: ['viewer-team'], satisfied: false },
+          { teams: ['viewer-team', 'creator-team'], satisfied: true },
+        ],
+        minimum: null,
+        allSatisfied: false,
+      };
+      expect(computeCodeownerState(makePr('no_reviews', status), 'creator-team')).toBe('approved');
+    });
+
+    it('returns no_reviews for viewer-team when it has an unsatisfied AND requirement even if OR group is satisfied', () => {
+      const status: CodeownerStatus = {
+        requirements: [
+          { teams: ['viewer-team'], satisfied: false },
+          { teams: ['viewer-team', 'creator-team'], satisfied: true },
+        ],
+        minimum: null,
+        allSatisfied: false,
+      };
+      expect(computeCodeownerState(makePr('no_reviews', status), 'viewer-team')).toBe('no_reviews');
+    });
+
+    it('falls back to global logic when team is not in any requirement', () => {
+      // messaging-pod is not a codeowner for this PR — fall back to global state
+      const status: CodeownerStatus = {
+        requirements: [{ teams: ['creator-team'], satisfied: false }],
+        minimum: null,
+        allSatisfied: false,
+      };
+      // Global logic: creator-team unsatisfied → no_reviews
+      expect(computeCodeownerState(makePr('partial', status), 'messaging-pod')).toBe('no_reviews');
+    });
   });
 });
 

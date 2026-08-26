@@ -1,5 +1,6 @@
 import { Octokit } from 'octokit';
-import type { PrRef } from '../types.js';
+import type { CodeownerStatus, PrRef } from '../types.js';
+import { parseCodeownerComment } from './codeowner-comment.js';
 import { summariseReviews } from './reviews.js';
 
 /** What a poll needs to know about a PR. */
@@ -41,6 +42,7 @@ export class PrUnreachableError extends Error {
 
 export interface GitHubClient {
   fetchPrStatus(ref: PrRef): Promise<PrStatus>;
+  fetchCodeownerStatus(ref: PrRef, botLogin: string): Promise<CodeownerStatus | null>;
 }
 
 function statusCode(error: unknown): number | undefined {
@@ -105,6 +107,39 @@ export class OctokitGitHubClient implements GitHubClient {
       baseUrl: options.baseUrl ?? 'https://api.github.com',
       userAgent: options.userAgent ?? 'mm-slack-cb-pr-status',
     });
+  }
+
+  /**
+   * Fetches and parses the codeowner bot's status comment on a PR.
+   *
+   * Scans all issue comments in reverse order (most recent first) for a comment
+   * by `botLogin` that matches the codeowner status format. Returns null when
+   * the bot hasn't commented yet or the PR has no codeowner requirements.
+   * Access failures are swallowed — codeowner status is best-effort.
+   */
+  async fetchCodeownerStatus(ref: PrRef, botLogin: string): Promise<CodeownerStatus | null> {
+    const { owner, repo, number } = ref;
+    const login = botLogin.toLowerCase();
+
+    try {
+      const comments = await this.octokit.paginate(this.octokit.rest.issues.listComments, {
+        owner,
+        repo,
+        issue_number: number,
+        per_page: 100,
+      });
+
+      for (const comment of [...comments].reverse()) {
+        if (comment.user?.login?.toLowerCase() !== login) continue;
+        const parsed = parseCodeownerComment(comment.body ?? '');
+        if (parsed !== null) return parsed;
+      }
+
+      return null;
+    } catch (error) {
+      if (classifyError(error)) return null;
+      throw error;
+    }
   }
 
   /**

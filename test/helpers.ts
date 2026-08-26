@@ -4,7 +4,7 @@ import { openDatabase, type DbHandle } from '../src/db/client.js';
 import { Store } from '../src/db/store.js';
 import type { GitHubClient, PrStatus } from '../src/github/client.js';
 import type { ReactionClient } from '../src/slack/reactions.js';
-import type { PrRef } from '../src/types.js';
+import type { CodeownerStatus, PrRef } from '../src/types.js';
 
 /** Silent logger — tests assert on behaviour, not on log output. */
 export const testLogger = pino({ level: 'silent' });
@@ -35,6 +35,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     databasePath: ':memory:',
     logLevel: 'silent',
     enableMessageScan: true,
+    teamMap: null,
     ...overrides,
   };
 }
@@ -93,6 +94,7 @@ export class FakeGitHubClient implements GitHubClient {
   readonly requests: string[] = [];
   private statuses = new Map<string, PrStatus>();
   private errors = new Map<string, Error>();
+  private codeownerStatuses = new Map<string, CodeownerStatus | null>();
 
   private static key(ref: PrRef): string {
     return `${ref.owner}/${ref.repo}#${ref.number}`;
@@ -108,6 +110,10 @@ export class FakeGitHubClient implements GitHubClient {
       title: 'test pr',
       ...status,
     });
+  }
+
+  setCodeownerStatus(ref: PrRef, status: CodeownerStatus | null): void {
+    this.codeownerStatuses.set(FakeGitHubClient.key(ref), status);
   }
 
   fail(ref: PrRef, error: Error): void {
@@ -126,5 +132,9 @@ export class FakeGitHubClient implements GitHubClient {
     const status = this.statuses.get(key);
     if (!status) throw new Error(`no fake status registered for ${key}`);
     return status;
+  }
+
+  async fetchCodeownerStatus(ref: PrRef, _botLogin: string): Promise<CodeownerStatus | null> {
+    return this.codeownerStatuses.get(FakeGitHubClient.key(ref)) ?? null;
   }
 }

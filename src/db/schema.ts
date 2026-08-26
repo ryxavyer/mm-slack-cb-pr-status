@@ -24,6 +24,8 @@ export const trackedPrs = sqliteTable(
      * becomes visible again; drives the give-up TTL if it never does.
      */
     unreachableSince: integer('unreachable_since'),
+    /** JSON-serialized CodeownerStatus from the codeowner bot's comment, if present. */
+    codeownerStatus: text('codeowner_status'),
   },
   (t) => [
     uniqueIndex('tracked_prs_owner_repo_number_idx').on(t.owner, t.repo, t.number),
@@ -44,6 +46,8 @@ export const prMessages = sqliteTable(
     messageTs: text('message_ts').notNull(),
     /** Which managed emoji we last successfully applied, if any. */
     currentReaction: text('current_reaction'),
+    /** GitHub team slug the channel/mention context resolved to, if any. */
+    requiredTeam: text('required_team'),
     createdAt: integer('created_at')
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

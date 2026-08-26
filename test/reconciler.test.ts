@@ -213,4 +213,63 @@ describe('Reconciler', () => {
 
     expect(reactions.calls).toEqual([]);
   });
+
+  describe('multi-team codeowner aggregation', () => {
+    function setPrWithCodeownerStatus(teamStatuses: Record<string, boolean>): TrackedPr {
+      const requirements = Object.entries(teamStatuses).map(([team, satisfied]) => ({
+        teams: [team],
+        satisfied,
+      }));
+      const allSatisfied = requirements.every((r) => r.satisfied);
+      const codeownerStatus = JSON.stringify({ requirements, minimum: null, allSatisfied });
+      const updated = store.recordPoll(pr.id, {
+        state: 'approved',
+        approvals: 2,
+        requiredApprovals: 2,
+        codeownerStatus,
+      });
+      if (!updated) throw new Error('missing pr');
+      return updated;
+    }
+
+    it('shows approved when both tagged teams are done', async () => {
+      store.linkMessage(pr.id, 'C1', '111.1');
+      store.setMessageRequiredTeams('C1', '111.1', ['creator-team', 'platform-team']);
+      await reconciler.reconcileMessage('C1', '111.1');
+
+      // Both satisfied → approved → white_check_mark
+      const updated = setPrWithCodeownerStatus({ 'creator-team': true, 'platform-team': true });
+      store.recordPoll(updated.id, {
+        state: 'approved',
+        approvals: 2,
+        requiredApprovals: 2,
+        codeownerStatus: updated.codeownerStatus,
+      });
+      reactions.calls.length = 0;
+
+      await reconciler.reconcileMessage('C1', '111.1');
+      expect(reactions.calls.find((c) => c.op === 'add')?.name).toBe('white_check_mark');
+    });
+
+    it('shows no_reviews (no emoji) when either tagged team is still pending', async () => {
+      store.linkMessage(pr.id, 'C1', '111.1');
+      store.setMessageRequiredTeams('C1', '111.1', ['creator-team', 'platform-team']);
+
+      // creator-team done, platform-team pending → aggregate is no_reviews
+      setPrWithCodeownerStatus({ 'creator-team': true, 'platform-team': false });
+
+      const summary = await reconciler.reconcileMessage('C1', '111.1');
+      expect(reactions.calls).toEqual([]);
+      expect(summary.unchanged).toBe(1);
+    });
+
+    it('falls back to pr.state when no required teams are stored', async () => {
+      store.linkMessage(pr.id, 'C1', '111.1');
+      setState('partial');
+
+      const summary = await reconciler.reconcileMessage('C1', '111.1');
+      expect(reactions.calls.find((c) => c.op === 'add')?.name).toBe('1of2');
+      expect(summary.added).toBe(1);
+    });
+  });
 });

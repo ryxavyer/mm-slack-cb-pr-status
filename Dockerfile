@@ -29,6 +29,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY drizzle ./drizzle
 COPY package.json ./
+COPY team-map.json ./
 
 # DATABASE_PATH is the only filesystem touchpoint. Mount a volume here (Railway
 # volume, EBS-backed path, docker -v …) or the database is lost on restart.

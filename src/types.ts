@@ -20,6 +20,18 @@ export function isPrState(value: unknown): value is PrState {
   return typeof value === 'string' && (PR_STATES as readonly string[]).includes(value);
 }
 
+export interface CodeownerRequirement {
+  /** Slugs of the teams in this requirement (no org prefix). Length > 1 = OR group. */
+  teams: string[];
+  satisfied: boolean;
+}
+
+export interface CodeownerStatus {
+  requirements: CodeownerRequirement[];
+  minimum: { required: number; found: number; met: boolean } | null;
+  allSatisfied: boolean;
+}
+
 /** A PR reference parsed out of a Slack message. */
 export interface PrRef {
   owner: string;

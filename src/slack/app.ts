@@ -91,7 +91,9 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
       'link_shared received',
     );
     if (refs.length === 0) return;
-    await service.trackLinks(event.channel, messageTs, refs);
+    // link_shared carries no message text — pass null so the lower-priority
+    // channel config is used; a subsequent message event can override with a mention.
+    await service.trackLinks(event.channel, messageTs, refs, null);
   });
 
   /**
@@ -126,7 +128,7 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
         'message received',
       );
       if (refs.length === 0) return;
-      await service.trackLinks(raw.channel as string, message.ts, refs);
+      await service.trackLinks(raw.channel as string, message.ts, refs, message.text);
     });
   }
 
