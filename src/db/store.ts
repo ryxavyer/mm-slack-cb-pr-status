@@ -171,15 +171,15 @@ export class Store {
     const unreachableSince =
       result.state === 'unknown' ? (existing?.unreachableSince ?? now) : null;
 
-    const set: Parameters<ReturnType<typeof this.db.update>['set']>[0] = {
+    const set = {
       state: result.state,
       approvals: result.approvals,
       requiredApprovals: result.requiredApprovals,
       lastPolledAt: now,
       closedAt,
       unreachableSince,
+      ...('codeownerStatus' in result ? { codeownerStatus: result.codeownerStatus ?? null } : {}),
     };
-    if ('codeownerStatus' in result) set.codeownerStatus = result.codeownerStatus ?? null;
 
     return this.db
       .update(trackedPrs)
