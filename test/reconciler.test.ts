@@ -251,16 +251,30 @@ describe('Reconciler', () => {
       expect(reactions.calls.find((c) => c.op === 'add')?.name).toBe('white_check_mark');
     });
 
-    it('shows no_reviews (no emoji) when either tagged team is still pending', async () => {
+    it('holds at partial when either tagged team is still pending', async () => {
       store.linkMessage(pr.id, 'C1', '111.1');
       store.setMessageRequiredTeams('C1', '111.1', ['creator-team', 'platform-team']);
 
-      // creator-team done, platform-team pending → aggregate is no_reviews
+      // creator-team done, platform-team pending. The PR itself has enough
+      // approvals, so it must not go bare — it holds at partial until the
+      // outstanding team signs off.
       setPrWithCodeownerStatus({ 'creator-team': true, 'platform-team': false });
 
       const summary = await reconciler.reconcileMessage('C1', '111.1');
-      expect(reactions.calls).toEqual([]);
-      expect(summary.unchanged).toBe(1);
+      expect(reactions.calls.find((c) => c.op === 'add')?.name).toBe('1of2');
+      expect(summary.added).toBe(1);
+    });
+
+    it('ignores codeowner status for a message with no team context', async () => {
+      store.linkMessage(pr.id, 'C2', '222.2');
+
+      // Same outstanding codeowner requirement, but this channel maps to no
+      // team — the plain approval count decides.
+      setPrWithCodeownerStatus({ 'creator-team': false });
+
+      const summary = await reconciler.reconcileMessage('C2', '222.2');
+      expect(reactions.calls.find((c) => c.op === 'add')?.name).toBe('white_check_mark');
+      expect(summary.added).toBe(1);
     });
 
     it('falls back to pr.state when no required teams are stored', async () => {

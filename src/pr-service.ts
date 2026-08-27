@@ -81,20 +81,41 @@ export class PrService {
   }
 
   /**
-   * Determines the GitHub team slugs for a message and persists them.
-   * All mentioned groups that map to known teams are collected; falls back to
-   * the channel's own team when no group mention resolves.
+   * Determines the GitHub team slugs for a message and persists them: the teams
+   * named by group mentions, or the channel's own team when no mention resolves.
+   *
+   * What decides whether that result is written is whether we actually saw the
+   * message text. `link_shared` does not carry any (see the handler in
+   * slack/app.ts), so on that path a mention is invisible and the answer is
+   * always "the channel's team" — a guess, not a reading. `link_shared` and
+   * `message` both fire for the same post in either order, so an unconditional
+   * write from the guessing path would clobber a mention the reading path had
+   * already resolved.
+   *
+   * Hence: a resolution made from the text is authoritative and replaces
+   * whatever is stored, including clearing it when an edit removes the mention.
+   * A resolution made without the text only fills in a blank.
    */
   private resolveMessageTeam(channelId: string, messageTs: string, messageText?: string): void {
     if (!this.config.teamMap) return;
     const { channels, groups } = this.config.teamMap;
 
-    const mentions = messageText ? parseGroupMentions(messageText) : [];
-    const mentionTeams = mentions.map((h) => groups.get(h)).filter((t): t is string => t !== undefined);
-    const teams = mentionTeams.length > 0 ? mentionTeams : channels.has(channelId) ? [channels.get(channelId)!] : [];
-    if (teams.length > 0) {
-      this.store.setMessageRequiredTeams(channelId, messageTs, teams);
+    const mentionTeams = parseGroupMentions(messageText)
+      .map((h) => groups.get(h))
+      .filter((t): t is string => t !== undefined);
+
+    const channelTeam = channels.get(channelId);
+    const resolved =
+      mentionTeams.length > 0 ? mentionTeams : channelTeam !== undefined ? [channelTeam] : [];
+
+    if (messageText) {
+      this.store.setMessageRequiredTeams(channelId, messageTs, resolved);
+      return;
     }
+
+    if (resolved.length === 0) return;
+    if (this.store.messageRequiredTeams(channelId, messageTs).length > 0) return;
+    this.store.setMessageRequiredTeams(channelId, messageTs, resolved);
   }
 
   /** An empty `WATCHED_REPOS` allows every repo the GitHub token can see. */

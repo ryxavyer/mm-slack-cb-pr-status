@@ -38,17 +38,22 @@ export function computeState({
  * Determines the emoji state for a PR from the perspective of a specific Slack
  * message, incorporating codeowner status when available.
  *
- * When `teamSlug` is provided (channel or mention resolved to a team):
- *   - All requirements mentioning that team satisfied + minimum met → approved
- *   - All requirements mentioning that team satisfied + minimum not met → partial
- *   - Any requirement mentioning that team unsatisfied → no_reviews
- *   - Team not in any requirement (PR doesn't touch their files) → global logic
+ * Codeowner data only applies when the message resolved to a team — a channel in
+ * the team map, or a group mention. The whole point of the check is to answer
+ * "does *this* team still owe a review?", and a message with no team context is
+ * not asking that question, so there the plain approval count stands.
  *
- * Without `teamSlug` (global PR-centric view):
- *   - All requirements satisfied + minimum met → approved
- *   - All requirements satisfied + minimum not met → partial
- *   - Any requirement unsatisfied → no_reviews
- *   - No requirements → fall back to pr.state
+ * With a `teamSlug`:
+ *   - Team's requirements satisfied + minimum met → approved
+ *   - Team's requirements satisfied + minimum outstanding → partial
+ *   - Team still owes a review → whatever the approval count earned, capped
+ *     below approved (an otherwise-approved PR shows partial)
+ *   - Team in no requirement (PR doesn't touch their files) → pr.state
+ *
+ * Codeowner status can only ever hold back the approved emoji; it must never
+ * take a message from an emoji down to none. "No codeowner sign-off yet" and
+ * "nobody has looked at this at all" are different things, and collapsing the
+ * first into the second silently strips the reaction off the message.
  *
  * Terminal and blocking states (merged, closed, unknown, changes_requested)
  * always pass through unchanged regardless of codeowner context.
@@ -63,7 +68,7 @@ export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState
     return pr.state;
   }
 
-  if (!pr.codeownerStatus) return pr.state;
+  if (!teamSlug || !pr.codeownerStatus) return pr.state;
 
   let status: CodeownerStatus;
   try {
@@ -74,18 +79,19 @@ export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState
 
   if (status.allSatisfied) return 'approved';
 
-  const applyGlobal = (): PrState => {
-    if (status.requirements.length === 0) return pr.state;
-    if (!status.requirements.every((r) => r.satisfied)) return 'no_reviews';
-    return status.minimum === null || status.minimum.met ? 'approved' : 'partial';
-  };
-
-  if (!teamSlug) return applyGlobal();
-
+  // The PR does not touch this team's files, so their codeowner status says
+  // nothing about it either way.
   const teamReqs = status.requirements.filter((r) => r.teams.includes(teamSlug));
-  if (teamReqs.length === 0) return applyGlobal();
+  if (teamReqs.length === 0) return pr.state;
 
-  if (!teamReqs.every((r) => r.satisfied)) return 'no_reviews';
+  // Still waiting on this team: hold back the green check, but keep whatever the
+  // approval count already earned rather than going bare.
+  if (!teamReqs.every((r) => r.satisfied)) {
+    return pr.state === 'approved' ? 'partial' : pr.state;
+  }
+
+  // The team has signed off. A minimum the codeowner bot still reports
+  // outstanding keeps this at partial — GitHub will not let the PR merge yet.
   return status.minimum === null || status.minimum.met ? 'approved' : 'partial';
 }
 

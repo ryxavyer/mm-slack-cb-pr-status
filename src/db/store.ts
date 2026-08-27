@@ -89,20 +89,27 @@ export class Store {
       .run();
   }
 
-  /** The resolved GitHub team slugs for a message. Empty array if none set. */
+  /**
+   * The resolved GitHub team slugs for a message. Empty array if none set.
+   *
+   * Takes the first *non-null* row rather than the first row, for the same
+   * reason `messageReaction` does: a row inserted when a new PR link is added to
+   * a message that already resolved to a team starts with `required_team` null,
+   * and reading that row would report the message as having no team context.
+   */
   messageRequiredTeams(channelId: string, messageTs: string): string[] {
-    const row = this.db
+    const rows = this.db
       .select({ requiredTeam: prMessages.requiredTeam })
       .from(prMessages)
       .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
-      .limit(1)
-      .get();
-    if (!row?.requiredTeam) return [];
+      .all();
+    const requiredTeam = rows.find((r) => r.requiredTeam !== null)?.requiredTeam;
+    if (!requiredTeam) return [];
     try {
-      const parsed = JSON.parse(row.requiredTeam);
+      const parsed = JSON.parse(requiredTeam);
       return Array.isArray(parsed) ? parsed : [parsed];
     } catch {
-      return [row.requiredTeam];
+      return [requiredTeam];
     }
   }
 

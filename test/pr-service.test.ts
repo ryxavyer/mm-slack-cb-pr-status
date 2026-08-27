@@ -138,6 +138,121 @@ describe('PrService', () => {
     });
   });
 
+  describe('team resolution', () => {
+    const teamMap = {
+      botLogin: 'mmllc-gh',
+      channels: new Map([['C_CREATOR', 'creator-team']]),
+      groups: new Map([['messaging-team', 'messaging-pod']]),
+    };
+
+    // Slack renders a user group mention as <!subteam^ID|@handle>.
+    const mention = 'ping <!subteam^S123|@messaging-team> please';
+
+    beforeEach(() => {
+      build({ teamMap });
+      github.set(ref, { approvals: 1 });
+    });
+
+    it('resolves the channel team when the message has no group mention', async () => {
+      await service.trackLinks('C_CREATOR', '111.1', [ref], 'no mentions here');
+      expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['creator-team']);
+    });
+
+    it('resolves a group mention in a channel with no team of its own', async () => {
+      await service.trackLinks('C_OTHER', '111.1', [ref], mention);
+      expect(store.messageRequiredTeams('C_OTHER', '111.1')).toEqual(['messaging-pod']);
+    });
+
+    it('prefers the mentioned team over the channel team', async () => {
+      await service.trackLinks('C_CREATOR', '111.1', [ref], mention);
+      expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['messaging-pod']);
+    });
+
+    it('leaves no team context when neither the channel nor a mention resolves', async () => {
+      await service.trackLinks('C_OTHER', '111.1', [ref], 'nothing to see');
+      expect(store.messageRequiredTeams('C_OTHER', '111.1')).toEqual([]);
+    });
+
+    // `link_shared` carries no message text, so it always resolves to the
+    // channel team (or nothing). It and the `message` event both fire for the
+    // same post, in either order, and the mention must survive both orderings.
+    describe('when link_shared and message both fire', () => {
+      it('upgrades the channel team once the message text arrives', async () => {
+        await service.trackLinks('C_CREATOR', '111.1', [ref]); // link_shared
+        expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['creator-team']);
+
+        await service.trackLinks('C_CREATOR', '111.1', [ref], mention); // message
+        expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['messaging-pod']);
+      });
+
+      it('does not let a late link_shared clobber the mentioned team', async () => {
+        await service.trackLinks('C_CREATOR', '111.1', [ref], mention); // message
+        await service.trackLinks('C_CREATOR', '111.1', [ref]); // link_shared, arriving late
+
+        expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['messaging-pod']);
+      });
+
+      it('does not strip a mentioned team in a channel with no team of its own', async () => {
+        await service.trackLinks('C_OTHER', '111.1', [ref], mention);
+        await service.trackLinks('C_OTHER', '111.1', [ref]);
+
+        expect(store.messageRequiredTeams('C_OTHER', '111.1')).toEqual(['messaging-pod']);
+      });
+    });
+
+    // An edit re-delivers as message_changed with the full new text, so the
+    // resolution is made afresh from what the message now says.
+    describe('when an edit changes the mentions', () => {
+      it('falls back to the channel team when the mention is removed', async () => {
+        await service.trackLinks('C_CREATOR', '111.1', [ref], mention);
+        expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['messaging-pod']);
+
+        await service.trackLinks('C_CREATOR', '111.1', [ref], 'mention removed');
+        expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['creator-team']);
+      });
+
+      it('clears the team context when the mention is removed in an unmapped channel', async () => {
+        await service.trackLinks('C_OTHER', '111.1', [ref], mention);
+        expect(store.messageRequiredTeams('C_OTHER', '111.1')).toEqual(['messaging-pod']);
+
+        await service.trackLinks('C_OTHER', '111.1', [ref], 'mention removed');
+        expect(store.messageRequiredTeams('C_OTHER', '111.1')).toEqual([]);
+      });
+
+      it('switches to the newly mentioned team', async () => {
+        await service.trackLinks('C_CREATOR', '111.1', [ref], mention);
+
+        await service.trackLinks('C_CREATOR', '111.1', [ref], 'no wait, this one');
+        expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['creator-team']);
+      });
+
+      it('still ignores a late link_shared after the mention was cleared', async () => {
+        await service.trackLinks('C_OTHER', '111.1', [ref], mention);
+        await service.trackLinks('C_OTHER', '111.1', [ref], 'mention removed');
+        await service.trackLinks('C_OTHER', '111.1', [ref]); // link_shared
+
+        expect(store.messageRequiredTeams('C_OTHER', '111.1')).toEqual([]);
+      });
+    });
+
+    it('keeps the team context when a later edit adds another PR link', async () => {
+      github.set(other, { approvals: 1 });
+      await service.trackLinks('C_CREATOR', '111.1', [ref], mention);
+
+      // The edit re-delivers as a message_changed with the same text; the new
+      // link inserts a row whose required_team starts null.
+      await service.trackLinks('C_CREATOR', '111.1', [ref, other], mention);
+
+      expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual(['messaging-pod']);
+    });
+
+    it('sets no team at all when TEAM_MAP_FILE is not configured', async () => {
+      build({ teamMap: null });
+      await service.trackLinks('C_CREATOR', '111.1', [ref], mention);
+      expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual([]);
+    });
+  });
+
   describe('a message linking several PRs', () => {
     it('carries one reaction for the least settled PR on it', async () => {
       github.set(ref, { approvals: 2 });

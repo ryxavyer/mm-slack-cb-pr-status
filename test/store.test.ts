@@ -237,5 +237,18 @@ describe('Store', () => {
       expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['platform-team', 'design-team']);
     });
 
+    it('reads past a link row added after the team was resolved', () => {
+      const first = store.upsertPr(ref, 2);
+      store.linkMessage(first.id, 'C1', '111.1');
+      store.setMessageRequiredTeams('C1', '111.1', ['creator-team']);
+
+      // A second PR link on the same message inserts a row with a null
+      // required_team; the message's team context must survive it.
+      const second = store.upsertPr(other, 2);
+      store.linkMessage(second.id, 'C1', '111.1');
+
+      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['creator-team']);
+    });
+
   });
 });
