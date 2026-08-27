@@ -36,8 +36,6 @@ async function main(): Promise<void> {
 
   logger.info(
     {
-      watchedChannels:
-        config.watchedChannels.size > 0 ? [...config.watchedChannels] : 'any (channel membership)',
       watchedRepos: config.watchedRepos.size > 0 ? [...config.watchedRepos] : 'any',
       requiredApprovals: config.requiredApprovals,
       pollIntervalSeconds: config.pollIntervalMs / 1000,

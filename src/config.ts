@@ -49,12 +49,6 @@ const envSchema = z.object({
   SLACK_BOT_TOKEN: z.string().min(1, 'required (xoxb-… bot token)'),
   SLACK_APP_TOKEN: z.string().min(1, 'required (xapp-… app-level token)'),
   GITHUB_TOKEN: z.string().min(1, 'required (read-only Pull Requests PAT)'),
-  /**
-   * Empty means "any channel the bot has been added to" — Slack delivers no
-   * events for channels it isn't a member of, so membership is the real gate and
-   * teams can self-serve. Set it to restrict the bot to specific channels.
-   */
-  WATCHED_CHANNELS: channelList.default(''),
   /** Empty means "any repo the GitHub token can see". */
   WATCHED_REPOS: repoList.default(''),
   REQUIRED_APPROVALS: z.coerce.number().int().min(1).default(2),
@@ -102,8 +96,6 @@ export type EmojiConfig = {
 export interface Config {
   slack: { botToken: string; appToken: string };
   github: { token: string; baseUrl: string };
-  /** Empty set means every channel the bot is a member of. */
-  watchedChannels: Set<string>;
   /** Empty set means every repo is allowed. */
   watchedRepos: Set<string>;
   requiredApprovals: number;
@@ -161,14 +153,6 @@ function loadTeamMap(filePath: string): TeamMap {
 
 const orNull = (s: string): string | null => (s === '' ? null : s);
 
-/**
- * Whether the bot should act on links in this channel. An unset allowlist means
- * every channel it has been added to, so Slack membership alone is the gate.
- */
-export function isWatchedChannel(config: Config, channelId: string): boolean {
-  return config.watchedChannels.size === 0 || config.watchedChannels.has(channelId);
-}
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
@@ -181,7 +165,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     slack: { botToken: e.SLACK_BOT_TOKEN, appToken: e.SLACK_APP_TOKEN },
     github: { token: e.GITHUB_TOKEN, baseUrl: e.GITHUB_API_BASE_URL },
-    watchedChannels: new Set(e.WATCHED_CHANNELS),
     watchedRepos: new Set(e.WATCHED_REPOS),
     requiredApprovals: e.REQUIRED_APPROVALS,
     pollIntervalMs: e.POLL_INTERVAL_SECONDS * 1000,

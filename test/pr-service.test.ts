@@ -53,29 +53,6 @@ describe('PrService', () => {
       ]);
     });
 
-    it('ignores channels outside the allowlist', async () => {
-      github.set(ref, { approvals: 1 });
-      await service.trackLinks('C_RANDOM', '111.1', [ref]);
-
-      expect(store.findPr(ref)).toBeUndefined();
-      expect(github.requests).toEqual([]);
-      expect(reactions.calls).toEqual([]);
-    });
-
-    it('tracks any channel when no channel allowlist is set', async () => {
-      // Membership is then the only gate: Slack delivers nothing for channels the
-      // bot was never added to, so teams can self-serve without a redeploy.
-      build({ watchedChannels: new Set<string>() });
-      github.set(ref, { approvals: 1 });
-
-      await service.trackLinks('C_SOME_OTHER_CHANNEL', '111.1', [ref]);
-
-      expect(store.findPr(ref)?.state).toBe('partial');
-      expect(reactions.calls.map((c) => `${c.channel}:${c.name}`)).toEqual([
-        'C_SOME_OTHER_CHANNEL:1of2',
-      ]);
-    });
-
     it('tracks every repo when no allowlist is set', async () => {
       const elsewhere = { owner: 'other', repo: 'thing', number: 9 };
       github.set(elsewhere, { approvals: 2 });

@@ -5,7 +5,6 @@ const required = {
   SLACK_BOT_TOKEN: 'xoxb-test',
   SLACK_APP_TOKEN: 'xapp-test',
   GITHUB_TOKEN: 'github_pat_test',
-  WATCHED_CHANNELS: 'C0123ABC',
 };
 
 describe('loadConfig', () => {
@@ -24,11 +23,6 @@ describe('loadConfig', () => {
       unknown: 'sleeping',
     });
     expect(config.unreachableTtlMs).toBe(7 * 24 * 60 * 60 * 1000);
-  });
-
-  it('parses a channel allowlist, trimming whitespace', () => {
-    const config = loadConfig({ ...required, WATCHED_CHANNELS: 'C0123ABC, C0456DEF ,' });
-    expect([...config.watchedChannels]).toEqual(['C0123ABC', 'C0456DEF']);
   });
 
   it('leaves the repo allowlist empty by default, meaning any repo', () => {
@@ -61,11 +55,6 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...required, SLACK_BOT_TOKEN: undefined })).toThrow(
       /SLACK_BOT_TOKEN/,
     );
-  });
-
-  it('treats an empty channel allowlist as "any channel the bot is in"', () => {
-    expect(loadConfig({ ...required, WATCHED_CHANNELS: '' }).watchedChannels.size).toBe(0);
-    expect(loadConfig({ ...required, WATCHED_CHANNELS: undefined }).watchedChannels.size).toBe(0);
   });
 
   it('rejects nonsense numbers instead of silently defaulting', () => {

@@ -1,4 +1,4 @@
-import { isWatchedChannel, type Config } from './config.js';
+import type { Config } from './config.js';
 import type { TrackedPr } from './db/schema.js';
 import type { Store } from './db/store.js';
 import { PrUnreachableError, type GitHubClient } from './github/client.js';
@@ -42,11 +42,6 @@ export class PrService {
    * When null (link_shared path), only the channel config fallback is used.
    */
   async trackLinks(channelId: string, messageTs: string, refs: PrRef[], messageText: string | null = null): Promise<void> {
-    if (!isWatchedChannel(this.config, channelId)) {
-      this.logger.debug({ channel: channelId }, 'ignoring links from unwatched channel');
-      return;
-    }
-
     // Link every PR before polling any of them. The reaction is an aggregate
     // over all the PRs on a message, so polling as we go would reconcile against
     // a half-built set — briefly showing (and paying Slack for) an emoji that the
@@ -229,6 +224,11 @@ export class PrService {
    *   wearing a permanent :sleeping:.
    */
   async cleanup(now = Date.now()): Promise<{ expired: number; retired: number }> {
+    const orphaned = this.store.deleteOrphanedPrs();
+    if (orphaned > 0) {
+      this.logger.info({ orphaned }, 'cleaned up orphaned prs with no linked messages');
+    }
+
     const expired = this.store.deleteClosedBefore(now - this.config.cleanupTtlMs);
     if (expired > 0) {
       this.logger.info({ expired }, 'cleaned up expired tracked prs');

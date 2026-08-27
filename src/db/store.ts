@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, lt, notInArray } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNotNull, isNull, lt, not, notInArray } from 'drizzle-orm';
 import type { PrRef, PrState } from '../types.js';
 import type { Db } from './client.js';
 import { prMessages, trackedPrs, type PrMessage, type TrackedPr } from './schema.js';
@@ -143,13 +143,41 @@ export class Store {
       .get();
   }
 
-  /** PRs still worth polling: anything not yet merged or closed. */
+  /** PRs still worth polling: anything not yet merged or closed that has at least one linked message. */
   listActivePrs(): TrackedPr[] {
     return this.db
       .select()
       .from(trackedPrs)
-      .where(notInArray(trackedPrs.state, TERMINAL_STATES))
+      .where(
+        and(
+          notInArray(trackedPrs.state, TERMINAL_STATES),
+          exists(
+            this.db.select({ _: prMessages.id }).from(prMessages).where(eq(prMessages.prId, trackedPrs.id)),
+          ),
+        ),
+      )
       .all();
+  }
+
+  /**
+   * Removes PRs that have no remaining message links — orphaned when their
+   * Slack message was deleted or dropped after becoming unreachable.
+   * Returns the number of PRs removed.
+   */
+  deleteOrphanedPrs(): number {
+    const orphans = this.db
+      .select({ id: trackedPrs.id })
+      .from(trackedPrs)
+      .where(
+        not(exists(
+          this.db.select({ _: prMessages.id }).from(prMessages).where(eq(prMessages.prId, trackedPrs.id)),
+        )),
+      )
+      .all();
+    if (orphans.length === 0) return 0;
+    const ids = orphans.map((r) => r.id);
+    this.db.delete(trackedPrs).where(inArray(trackedPrs.id, ids)).run();
+    return ids.length;
   }
 
   listPrsByState(states: PrState[]): TrackedPr[] {

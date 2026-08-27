@@ -53,6 +53,8 @@ describe('Store', () => {
   it('lists only non-terminal PRs as active', () => {
     const open = store.upsertPr(ref, 2);
     const done = store.upsertPr(other, 2);
+    store.linkMessage(open.id, 'C1', '111.1');
+    store.linkMessage(done.id, 'C1', '222.2');
     store.recordPoll(done.id, { state: 'merged', approvals: 2, requiredApprovals: 2 });
 
     const active = store.listActivePrs();
@@ -79,6 +81,7 @@ describe('Store', () => {
 
   it('clears closedAt if a PR is reopened', () => {
     const pr = store.upsertPr(ref, 2);
+    store.linkMessage(pr.id, 'C1', '111.1');
     store.recordPoll(pr.id, { state: 'closed', approvals: 0, requiredApprovals: 2 }, 1_000);
     const reopened = store.recordPoll(
       pr.id,
@@ -169,6 +172,34 @@ describe('Store', () => {
     store.recordPoll(pr.id, { state: 'approved', approvals: 2, requiredApprovals: 2 });
     expect(store.deleteClosedBefore(Date.now() + 1_000_000)).toBe(0);
     expect(store.getPr(pr.id)).toBeDefined();
+  });
+
+  it('excludes PRs with no linked messages from listActivePrs', () => {
+    const linked = store.upsertPr(ref, 2);
+    const orphan = store.upsertPr(other, 2);
+    store.linkMessage(linked.id, 'C1', '111.1');
+    // orphan has no messages
+
+    expect(store.listActivePrs().map((p) => p.id)).toEqual([linked.id]);
+  });
+
+  it('deleteOrphanedPrs removes PRs with no message links', () => {
+    const linked = store.upsertPr(ref, 2);
+    const orphan = store.upsertPr(other, 2);
+    store.linkMessage(linked.id, 'C1', '111.1');
+
+    expect(store.deleteOrphanedPrs()).toBe(1);
+    expect(store.getPr(orphan.id)).toBeUndefined();
+    expect(store.getPr(linked.id)).toBeDefined();
+  });
+
+  it('deleteOrphanedPrs leaves PRs alone once all messages are deleted', () => {
+    const pr = store.upsertPr(ref, 2);
+    store.linkMessage(pr.id, 'C1', '111.1');
+    store.deleteMessagesByTs('C1', '111.1');
+
+    expect(store.deleteOrphanedPrs()).toBe(1);
+    expect(store.getPr(pr.id)).toBeUndefined();
   });
 
   it('finds a PR by its reference', () => {

@@ -18,7 +18,6 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     slack: { botToken: 'xoxb-test', appToken: 'xapp-test' },
     github: { token: 'ghp-test', baseUrl: 'https://api.github.com' },
-    watchedChannels: new Set(['C_WATCHED']),
     watchedRepos: new Set<string>(),
     requiredApprovals: 2,
     pollIntervalMs: 90_000,

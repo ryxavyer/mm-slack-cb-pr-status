@@ -1,5 +1,5 @@
 import { App, LogLevel, type Logger as BoltLogger } from '@slack/bolt';
-import { isWatchedChannel, type Config } from '../config.js';
+import type { Config } from '../config.js';
 import type { Store } from '../db/store.js';
 import type { Logger } from '../logger.js';
 import type { PrService } from '../pr-service.js';
@@ -64,23 +64,11 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   });
 
   /**
-   * Logs the drop rather than returning silently: "the event was filtered" and
-   * "no event ever arrived" are otherwise indistinguishable in the logs, which
-   * is exactly the question you need answered when nothing happens.
-   */
-  const watched = (channel: unknown, source: string): channel is string => {
-    if (typeof channel !== 'string') return false;
-    if (isWatchedChannel(config, channel)) return true;
-    logger.debug({ channel, source }, 'ignoring event from unwatched channel');
-    return false;
-  };
-
-  /**
    * Primary signal. Slack fires `link_shared` for our registered unfurl domain
    * (github.com) in channels the bot is a member of.
    */
   app.event('link_shared', async ({ event }) => {
-    if (!watched(event.channel, 'link_shared')) return;
+    if (typeof event.channel !== 'string') return;
     const messageTs = event.message_ts;
     if (typeof messageTs !== 'string') return;
 
@@ -105,7 +93,7 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   if (config.enableMessageScan) {
     app.event('message', async ({ event }) => {
       const raw = event as unknown as Record<string, unknown>;
-      if (!watched(raw.channel, 'message')) return;
+      if (typeof raw.channel !== 'string') return;
 
       if (raw.subtype === 'message_deleted') {
         const previous = raw.previous_message as Record<string, unknown> | undefined;
