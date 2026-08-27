@@ -1,4 +1,4 @@
-import { and, eq, exists, inArray, isNotNull, isNull, lt, not, notInArray } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNotNull, lt, not, notInArray } from 'drizzle-orm';
 import type { PrRef, PrState } from '../types.js';
 import type { Db } from './client.js';
 import { prMessages, trackedPrs, type PrMessage, type TrackedPr } from './schema.js';
@@ -86,25 +86,6 @@ export class Store {
       .update(prMessages)
       .set({ requiredTeam: JSON.stringify(teams) })
       .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
-      .run();
-  }
-
-  /**
-   * Sets requiredTeams only when the rows have no value yet.
-   * Used when message text is unavailable (link_shared) so that a subsequent
-   * message event carrying explicit mentions can still override.
-   */
-  initMessageRequiredTeams(channelId: string, messageTs: string, teams: string[]): void {
-    this.db
-      .update(prMessages)
-      .set({ requiredTeam: JSON.stringify(teams) })
-      .where(
-        and(
-          eq(prMessages.channelId, channelId),
-          eq(prMessages.messageTs, messageTs),
-          isNull(prMessages.requiredTeam),
-        ),
-      )
       .run();
   }
 

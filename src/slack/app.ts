@@ -64,10 +64,12 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   });
 
   /**
-   * Primary signal. Slack fires `link_shared` for our registered unfurl domain
-   * (github.com) in channels the bot is a member of.
+   * Primary signal. `is_bot_user_member` gates it to channels the bot has been
+   * invited to — without it, Slack fires link_shared for any public channel in
+   * the workspace where github.com links appear, even if the bot isn't there.
    */
   app.event('link_shared', async ({ event }) => {
+    if (!event.is_bot_user_member) return;
     if (typeof event.channel !== 'string') return;
     const messageTs = event.message_ts;
     if (typeof messageTs !== 'string') return;
@@ -79,16 +81,13 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
       'link_shared received',
     );
     if (refs.length === 0) return;
-    // link_shared carries no message text — pass null so the lower-priority
-    // channel config is used; a subsequent message event can override with a mention.
-    await service.trackLinks(event.channel, messageTs, refs, null);
+    await service.trackLinks(event.channel, messageTs, refs);
   });
 
   /**
-   * Fallback signal. Slack suppresses `link_shared` for a URL that was already
-   * unfurled recently in the same channel, so scanning message text as well is
-   * what makes "the same PR posted twice" reliable. Both paths funnel into the
-   * same idempotent upsert, so overlap is harmless.
+   * Fallback signal. Slack suppresses link_shared for URLs recently unfurled in
+   * the same channel, so scanning message text catches re-posts reliably. Both
+   * paths are idempotent upserts so overlap is harmless.
    */
   if (config.enableMessageScan) {
     app.event('message', async ({ event }) => {

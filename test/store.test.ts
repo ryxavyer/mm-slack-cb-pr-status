@@ -237,19 +237,5 @@ describe('Store', () => {
       expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['platform-team', 'design-team']);
     });
 
-    it('initMessageRequiredTeams does not overwrite an existing value', () => {
-      const pr = store.upsertPr(ref, 2);
-      store.linkMessage(pr.id, 'C1', '111.1');
-      store.setMessageRequiredTeams('C1', '111.1', ['creator-team']);
-      store.initMessageRequiredTeams('C1', '111.1', ['platform-team']);
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['creator-team']);
-    });
-
-    it('initMessageRequiredTeams writes when no value exists yet', () => {
-      const pr = store.upsertPr(ref, 2);
-      store.linkMessage(pr.id, 'C1', '111.1');
-      store.initMessageRequiredTeams('C1', '111.1', ['creator-team']);
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['creator-team']);
-    });
   });
 });

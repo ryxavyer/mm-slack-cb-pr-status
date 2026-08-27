@@ -39,9 +39,8 @@ export class PrService {
    * converge on the same rows.
    *
    * `messageText` is used to extract Slack user group mentions for team resolution.
-   * When null (link_shared path), only the channel config fallback is used.
    */
-  async trackLinks(channelId: string, messageTs: string, refs: PrRef[], messageText: string | null = null): Promise<void> {
+  async trackLinks(channelId: string, messageTs: string, refs: PrRef[], messageText?: string): Promise<void> {
     // Link every PR before polling any of them. The reaction is an aggregate
     // over all the PRs on a message, so polling as we go would reconcile against
     // a half-built set — briefly showing (and paying Slack for) an emoji that the
@@ -82,33 +81,19 @@ export class PrService {
   }
 
   /**
-   * Determines the GitHub team slug for a message and persists it.
-   *
-   * Group mentions in message text take priority (always overwrite).
-   * Channel config is a lower-priority fallback that only writes when no value
-   * exists yet, so a later message event with a mention can still override a
-   * link_shared event that set the channel default first.
+   * Determines the GitHub team slugs for a message and persists them.
+   * All mentioned groups that map to known teams are collected; falls back to
+   * the channel's own team when no group mention resolves.
    */
-  private resolveMessageTeam(channelId: string, messageTs: string, messageText: string | null): void {
+  private resolveMessageTeam(channelId: string, messageTs: string, messageText?: string): void {
     if (!this.config.teamMap) return;
     const { channels, groups } = this.config.teamMap;
 
-    if (messageText !== null) {
-      // Text is available: collect all mentioned groups that map to known teams,
-      // then fall back to the channel's team if none matched.
-      const mentions = parseGroupMentions(messageText);
-      const mentionTeams = mentions.map((h) => groups.get(h)).filter((t): t is string => t !== undefined);
-      const teams = mentionTeams.length > 0 ? mentionTeams : channels.has(channelId) ? [channels.get(channelId)!] : [];
-      if (teams.length > 0) {
-        // Overwrite: message-derived value is authoritative.
-        this.store.setMessageRequiredTeams(channelId, messageTs, teams);
-      }
-    } else {
-      // No text (link_shared): use channel config only if nothing is set yet.
-      const team = channels.get(channelId);
-      if (team) {
-        this.store.initMessageRequiredTeams(channelId, messageTs, [team]);
-      }
+    const mentions = messageText ? parseGroupMentions(messageText) : [];
+    const mentionTeams = mentions.map((h) => groups.get(h)).filter((t): t is string => t !== undefined);
+    const teams = mentionTeams.length > 0 ? mentionTeams : channels.has(channelId) ? [channels.get(channelId)!] : [];
+    if (teams.length > 0) {
+      this.store.setMessageRequiredTeams(channelId, messageTs, teams);
     }
   }
 
