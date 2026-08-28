@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { DbHandle } from '../src/db/client.js';
 import type { Store } from '../src/db/store.js';
+import { parseCodeownerComment } from '../src/github/codeowner-comment.js';
 import { PrUnreachableError } from '../src/github/client.js';
 import { PrService } from '../src/pr-service.js';
 import { Reconciler } from '../src/reconciler.js';
@@ -250,6 +251,124 @@ describe('PrService', () => {
       build({ teamMap: null });
       await service.trackLinks('C_CREATOR', '111.1', [ref], mention);
       expect(store.messageRequiredTeams('C_CREATOR', '111.1')).toEqual([]);
+    });
+  });
+
+  describe('codeowner status end to end', () => {
+    const teamMap = {
+      botLogin: 'mmllc-gh',
+      channels: new Map([['C_CREATOR', 'creator-team']]),
+      groups: new Map([['messaging-team', 'messaging-pod']]),
+    };
+
+    const DONE = 'Codeowners reviews satisfied';
+    const CREATOR_PENDING = `Codeowners approval required for this PR:
+
+@multimediallc/creator-team
+Show detailed file reviewers`;
+    const CREATOR_DONE = `Codeowners approval required for this PR:
+
+✅ @multimediallc/creator-team`;
+
+    /** Wires the fake GitHub client to a real codeowner comment body. */
+    const withComment = (body: string | null, approvals: number) => {
+      github.set(ref, { approvals });
+      github.setCodeownerStatus(ref, body === null ? null : parseCodeownerComment(body));
+    };
+
+    const added = () => reactions.calls.find((c) => c.op === 'add')?.name ?? null;
+
+    beforeEach(() => build({ teamMap }));
+
+    describe('in a channel with no team of its own', () => {
+      it('shows the green check when the bot says the reviews are satisfied', async () => {
+        // The bot knows the repo's real rule: one approval from the owning team
+        // can settle a PR that REQUIRED_APPROVALS alone still calls partial.
+        withComment(DONE, 1);
+        await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+
+        expect(store.findPr(ref)?.state).toBe('partial');
+        expect(added()).toBe('white_check_mark');
+      });
+
+      it('keeps the approval count while a codeowner is outstanding', async () => {
+        withComment(CREATOR_PENDING, 1);
+        await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+
+        expect(added()).toBe('1of2');
+      });
+
+      it('does not hold back a PR with enough approvals for an outstanding codeowner', async () => {
+        withComment(CREATOR_PENDING, 2);
+        await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+
+        expect(added()).toBe('white_check_mark');
+      });
+    });
+
+    describe('in the owning team’s channel', () => {
+      it('holds an approved PR at partial while that team owes a review', async () => {
+        withComment(CREATOR_PENDING, 2);
+        await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+
+        expect(store.findPr(ref)?.state).toBe('approved');
+        expect(added()).toBe('1of2');
+      });
+
+      it('shows the green check once that team approves', async () => {
+        withComment(CREATOR_DONE, 1);
+        await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+
+        expect(added()).toBe('white_check_mark');
+      });
+
+      it('adds no reaction to a PR nobody has reviewed', async () => {
+        withComment(CREATOR_PENDING, 0);
+        await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+
+        expect(reactions.calls).toEqual([]);
+      });
+    });
+
+    it('moves to the green check on the poll after the codeowner approves', async () => {
+      withComment(CREATOR_PENDING, 1);
+      await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+      expect(added()).toBe('1of2');
+      reactions.calls.length = 0;
+
+      // Same approval count; only the codeowner comment changed.
+      withComment(CREATOR_DONE, 1);
+      await service.runCycle();
+
+      expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([
+        ['remove', '1of2'],
+        ['add', 'white_check_mark'],
+      ]);
+    });
+
+    it('clears a stored codeowner status when the bot deletes its comment', async () => {
+      withComment(CREATOR_DONE, 1);
+      await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+      expect(added()).toBe('white_check_mark');
+      reactions.calls.length = 0;
+
+      withComment(null, 1);
+      await service.runCycle();
+
+      expect(store.findPr(ref)?.codeownerStatus).toBeNull();
+      expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([
+        ['remove', 'white_check_mark'],
+        ['add', '1of2'],
+      ]);
+    });
+
+    it('never fetches codeowner status when TEAM_MAP_FILE is not configured', async () => {
+      build({ teamMap: null });
+      withComment(DONE, 1);
+      await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+
+      expect(store.findPr(ref)?.codeownerStatus).toBeNull();
+      expect(added()).toBe('1of2');
     });
   });
 

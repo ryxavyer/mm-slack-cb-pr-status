@@ -38,22 +38,28 @@ export function computeState({
  * Determines the emoji state for a PR from the perspective of a specific Slack
  * message, incorporating codeowner status when available.
  *
- * Codeowner data only applies when the message resolved to a team — a channel in
- * the team map, or a group mention. The whole point of the check is to answer
- * "does *this* team still owe a review?", and a message with no team context is
- * not asking that question, so there the plain approval count stands.
+ * The codeowner bot is the authority on whether a PR is done being reviewed, so
+ * `allSatisfied` reports approved from any context — with or without a team. It
+ * knows things the raw approval count does not: one approval from the right team
+ * can satisfy the repo where `REQUIRED_APPROVALS` alone would still read as
+ * partial.
  *
- * With a `teamSlug`:
+ * The rest of the codeowner detail answers a narrower question — "does *this*
+ * team still owe a review?" — and only applies when the message resolved to a
+ * team, via the team map or a group mention. With a `teamSlug`:
  *   - Team's requirements satisfied + minimum met → approved
  *   - Team's requirements satisfied + minimum outstanding → partial
  *   - Team still owes a review → whatever the approval count earned, capped
  *     below approved (an otherwise-approved PR shows partial)
  *   - Team in no requirement (PR doesn't touch their files) → pr.state
  *
- * Codeowner status can only ever hold back the approved emoji; it must never
- * take a message from an emoji down to none. "No codeowner sign-off yet" and
- * "nobody has looked at this at all" are different things, and collapsing the
- * first into the second silently strips the reaction off the message.
+ * Without a `teamSlug` there is no team whose outstanding review could hold the
+ * PR back, so codeowner data can only ever raise the state, never lower it.
+ *
+ * In neither case may codeowner status take a message from an emoji down to
+ * none. "No codeowner sign-off yet" and "nobody has looked at this at all" are
+ * different things, and collapsing the first into the second silently strips the
+ * reaction off the message.
  *
  * Terminal and blocking states (merged, closed, unknown, changes_requested)
  * always pass through unchanged regardless of codeowner context.
@@ -68,7 +74,7 @@ export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState
     return pr.state;
   }
 
-  if (!teamSlug || !pr.codeownerStatus) return pr.state;
+  if (!pr.codeownerStatus) return pr.state;
 
   let status: CodeownerStatus;
   try {
@@ -77,7 +83,14 @@ export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState
     return pr.state;
   }
 
+  // Every codeowner requirement is signed off and any minimum is met: the bot
+  // has declared the PR done, which outranks the approval count.
   if (status.allSatisfied) return 'approved';
+
+  // No team context, and the bot has not declared the PR done. Nothing here can
+  // raise the state, and without a team there is nobody whose outstanding review
+  // would justify lowering it.
+  if (!teamSlug) return pr.state;
 
   // The PR does not touch this team's files, so their codeowner status says
   // nothing about it either way.
