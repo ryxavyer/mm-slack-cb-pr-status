@@ -1,0 +1,1 @@
+ALTER TABLE `pr_messages` DROP COLUMN `required_team`;

@@ -46,8 +46,6 @@ export const prMessages = sqliteTable(
     messageTs: text('message_ts').notNull(),
     /** Which managed emoji we last successfully applied, if any. */
     currentReaction: text('current_reaction'),
-    /** GitHub team slug the channel/mention context resolved to, if any. */
-    requiredTeam: text('required_team'),
     createdAt: integer('created_at')
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -58,5 +56,23 @@ export const prMessages = sqliteTable(
   ],
 );
 
+/**
+ * What we know about the Slack channels we have seen messages in.
+ *
+ * Privacy is a property of the channel, not of any one message, and it decides
+ * which question the reaction answers there — see `computeCodeownerState`. It is
+ * kept here rather than on `pr_messages` so that a channel learned from one
+ * message applies to every other message in it, including ones discovered
+ * through `link_shared`, which carries no `channel_type`.
+ */
+export const slackChannels = sqliteTable('slack_channels', {
+  channelId: text('channel_id').primaryKey(),
+  isPrivate: integer('is_private', { mode: 'boolean' }).notNull(),
+  updatedAt: integer('updated_at')
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
 export type TrackedPr = typeof trackedPrs.$inferSelect;
 export type PrMessage = typeof prMessages.$inferSelect;
+export type SlackChannel = typeof slackChannels.$inferSelect;

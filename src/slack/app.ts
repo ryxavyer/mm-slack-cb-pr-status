@@ -94,6 +94,14 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
       const raw = event as unknown as Record<string, unknown>;
       if (typeof raw.channel !== 'string') return;
 
+      // Slack stamps this on every message event: 'channel' for a public
+      // channel, 'group' for a private one. It is the only place we learn it —
+      // `link_shared` carries no channel_type — so record it whenever we see a
+      // message here, even one with no PR link in it.
+      if (raw.channel_type === 'channel' || raw.channel_type === 'group') {
+        store.setChannelPrivacy(raw.channel, raw.channel_type === 'group');
+      }
+
       if (raw.subtype === 'message_deleted') {
         const previous = raw.previous_message as Record<string, unknown> | undefined;
         const ts = previous?.ts;
@@ -115,7 +123,7 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
         'message received',
       );
       if (refs.length === 0) return;
-      await service.trackLinks(raw.channel as string, message.ts, refs, message.text);
+      await service.trackLinks(raw.channel as string, message.ts, refs);
     });
   }
 

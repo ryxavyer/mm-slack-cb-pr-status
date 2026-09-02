@@ -29,6 +29,7 @@ async function main(): Promise<void> {
     new WebApiReactionClient(webClient),
     config.emoji,
     logger,
+    config.teamMap,
   );
   const service = new PrService(store, github, reconciler, config, logger);
   const poller = new Poller(service, config.pollIntervalMs, logger);

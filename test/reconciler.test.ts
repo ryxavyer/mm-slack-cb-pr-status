@@ -330,6 +330,123 @@ describe('Reconciler', () => {
     });
   });
 
+  describe('the team view in a private channel', () => {
+    // The whole point of gating on privacy: a private channel has one team in
+    // it, so its sign-off can speak for the room. A public channel has several,
+    // so it cannot.
+    const TEAM = 'monetization-team';
+    const teamMap = {
+      botLogin: 'mmllc-gh',
+      channels: new Map([['C_TEAM', TEAM]]),
+    };
+
+    let aware: Reconciler;
+
+    beforeEach(() => {
+      aware = new Reconciler(store, reactions, emoji, testLogger, teamMap);
+    });
+
+    /** One approval, the team signed off, another group still outstanding. */
+    const setPr = () => {
+      const updated = store.recordPoll(pr.id, {
+        state: 'partial',
+        approvals: 1,
+        requiredApprovals: 2,
+        codeownerStatus: JSON.stringify({
+          requirements: [
+            { teams: [TEAM], satisfied: true },
+            { teams: ['frontend-team'], satisfied: false },
+          ],
+          minimum: null,
+          allSatisfied: false,
+        }),
+      });
+      if (!updated) throw new Error('missing pr');
+    };
+
+    const added = () => reactions.calls.find((c) => c.op === 'add')?.name ?? null;
+
+    it('upgrades in a private channel mapped to the team', async () => {
+      store.linkMessage(pr.id, 'C_TEAM', '111.1');
+      store.setChannelPrivacy('C_TEAM', true);
+      setPr();
+
+      await aware.reconcileMessage('C_TEAM', '111.1');
+      expect(added()).toBe('white_check_mark');
+    });
+
+    it('does not upgrade in the same channel when it is public', async () => {
+      store.linkMessage(pr.id, 'C_TEAM', '111.1');
+      store.setChannelPrivacy('C_TEAM', false);
+      setPr();
+
+      await aware.reconcileMessage('C_TEAM', '111.1');
+      expect(added()).toBe('1of2');
+    });
+
+    it('does not upgrade while the channel privacy is still unknown', async () => {
+      // link_shared carries no channel_type, so a message can be tracked before
+      // we know. Defaulting to the public rule never overclaims.
+      store.linkMessage(pr.id, 'C_TEAM', '111.1');
+      setPr();
+
+      await aware.reconcileMessage('C_TEAM', '111.1');
+      expect(added()).toBe('1of2');
+    });
+
+    it('does not upgrade in a private channel the team map does not name', async () => {
+      store.linkMessage(pr.id, 'C_OTHER', '111.1');
+      store.setChannelPrivacy('C_OTHER', true);
+      setPr();
+
+      await aware.reconcileMessage('C_OTHER', '111.1');
+      expect(added()).toBe('1of2');
+    });
+
+    it('does not upgrade when no team map is configured at all', async () => {
+      store.linkMessage(pr.id, 'C_TEAM', '111.1');
+      store.setChannelPrivacy('C_TEAM', true);
+      setPr();
+
+      // `reconciler` is built without a team map.
+      await reconciler.reconcileMessage('C_TEAM', '111.1');
+      expect(added()).toBe('1of2');
+    });
+
+    it('still holds back in the team channel while that team owes a review', async () => {
+      store.linkMessage(pr.id, 'C_TEAM', '111.1');
+      store.setChannelPrivacy('C_TEAM', true);
+      store.recordPoll(pr.id, {
+        state: 'approved',
+        approvals: 2,
+        requiredApprovals: 2,
+        codeownerStatus: JSON.stringify({
+          requirements: [{ teams: [TEAM], satisfied: false }],
+          minimum: null,
+          allSatisfied: false,
+        }),
+      });
+
+      await aware.reconcileMessage('C_TEAM', '111.1');
+      expect(added()).toBe('1of2');
+    });
+
+    it('carries a different emoji for the same PR in each channel', async () => {
+      // The same PR posted in both places reads differently, which is the point.
+      store.linkMessage(pr.id, 'C_TEAM', '111.1');
+      store.linkMessage(pr.id, 'C_PUBLIC', '222.2');
+      store.setChannelPrivacy('C_TEAM', true);
+      store.setChannelPrivacy('C_PUBLIC', false);
+      setPr();
+
+      await aware.reconcilePr(store.getPr(pr.id)!);
+
+      expect(
+        reactions.calls.filter((c) => c.op === 'add').map((c) => `${c.channel}:${c.name}`),
+      ).toEqual(['C_TEAM:white_check_mark', 'C_PUBLIC:1of2']);
+    });
+  });
+
   describe('aggregating several PRs on one message', () => {
     it('lets awaiting_codeowners outrank a partly reviewed PR', async () => {
       const other = store.upsertPr({ owner: 'acme', repo: 'monolith', number: 43 }, 2);

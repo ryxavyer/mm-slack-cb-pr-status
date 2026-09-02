@@ -1,20 +1,6 @@
 {
   "botLogin": "mmllc-gh",
   "channels": {
-    "C07QG51FTR9": "creator-team",
-    "C07JTSF47NG": "creator-demand-gen",
-    "C0BMPH3PYG6": "media-library-experts"
-  },
-  "groups": {
-    "creator-team": "creator-team",
-    "creator-monetization": "monetization-team",
-    "cb-experts-frontend-rooms": "frontend-room-experts",
-    "demand-gen-team": "creator-demand-gen",
-    "cb-experts-tipping-purchase": "tipping-and-purchase-experts",
-    "cb-experts-frontend-roomlist": "frontend-roomlist-experts",
-    "core-reviewers-frontend": "core-pod-review-frontend",
-    "cb-experts-affiliate-program": "affiliate-program-experts",
-    "cb-backend-systems-reviewers": "cb-backend-systems-reviewers",
-    "messaging-team": "messaging-pod"
+    "C090CUYETGF": "monetization-team"
   }
 }

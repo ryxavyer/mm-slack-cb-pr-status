@@ -4,7 +4,6 @@ import type { Store } from './db/store.js';
 import { PrUnreachableError, type GitHubClient } from './github/client.js';
 import type { Logger } from './logger.js';
 import type { Reconciler } from './reconciler.js';
-import { parseGroupMentions } from './slack/parse-mentions.js';
 import { computeState } from './state.js';
 import { prRefKey, type PrRef, type PrState } from './types.js';
 
@@ -37,10 +36,8 @@ export class PrService {
    *
    * Idempotent: re-delivered events, message edits and duplicate links all
    * converge on the same rows.
-   *
-   * `messageText` is used to extract Slack user group mentions for team resolution.
    */
-  async trackLinks(channelId: string, messageTs: string, refs: PrRef[], messageText?: string): Promise<void> {
+  async trackLinks(channelId: string, messageTs: string, refs: PrRef[]): Promise<void> {
     // Link every PR before polling any of them. The reaction is an aggregate
     // over all the PRs on a message, so polling as we go would reconcile against
     // a half-built set — briefly showing (and paying Slack for) an emoji that the
@@ -67,8 +64,6 @@ export class PrService {
       }
     }
 
-    this.resolveMessageTeam(channelId, messageTs, messageText);
-
     for (const pr of tracked) {
       try {
         await this.pollPr(pr);
@@ -78,44 +73,6 @@ export class PrService {
           .error({ err: error }, 'failed to poll newly tracked pr');
       }
     }
-  }
-
-  /**
-   * Determines the GitHub team slugs for a message and persists them: the teams
-   * named by group mentions, or the channel's own team when no mention resolves.
-   *
-   * What decides whether that result is written is whether we actually saw the
-   * message text. `link_shared` does not carry any (see the handler in
-   * slack/app.ts), so on that path a mention is invisible and the answer is
-   * always "the channel's team" — a guess, not a reading. `link_shared` and
-   * `message` both fire for the same post in either order, so an unconditional
-   * write from the guessing path would clobber a mention the reading path had
-   * already resolved.
-   *
-   * Hence: a resolution made from the text is authoritative and replaces
-   * whatever is stored, including clearing it when an edit removes the mention.
-   * A resolution made without the text only fills in a blank.
-   */
-  private resolveMessageTeam(channelId: string, messageTs: string, messageText?: string): void {
-    if (!this.config.teamMap) return;
-    const { channels, groups } = this.config.teamMap;
-
-    const mentionTeams = parseGroupMentions(messageText)
-      .map((h) => groups.get(h))
-      .filter((t): t is string => t !== undefined);
-
-    const channelTeam = channels.get(channelId);
-    const resolved =
-      mentionTeams.length > 0 ? mentionTeams : channelTeam !== undefined ? [channelTeam] : [];
-
-    if (messageText) {
-      this.store.setMessageRequiredTeams(channelId, messageTs, resolved);
-      return;
-    }
-
-    if (resolved.length === 0) return;
-    if (this.store.messageRequiredTeams(channelId, messageTs).length > 0) return;
-    this.store.setMessageRequiredTeams(channelId, messageTs, resolved);
   }
 
   /** An empty `WATCHED_REPOS` allows every repo the GitHub token can see. */

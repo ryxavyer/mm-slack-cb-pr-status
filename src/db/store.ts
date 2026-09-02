@@ -1,7 +1,7 @@
 import { and, eq, exists, inArray, isNotNull, lt, not, notInArray } from 'drizzle-orm';
 import type { PrRef, PrState } from '../types.js';
 import type { Db } from './client.js';
-import { prMessages, trackedPrs, type PrMessage, type TrackedPr } from './schema.js';
+import { prMessages, slackChannels, trackedPrs, type PrMessage, type TrackedPr } from './schema.js';
 
 const TERMINAL_STATES: PrState[] = ['merged', 'closed'];
 
@@ -76,41 +76,29 @@ export class Store {
   }
 
   /**
-   * Sets requiredTeams on every row for a message, overwriting any prior value.
-   * Stored as a JSON array so multiple teams can be tracked per message.
-   * Used when message text is available and group mentions or channel config
-   * resolve to teams (highest-priority signal).
+   * Records whether a Slack channel is private. Learned from `channel_type` on
+   * message events; `link_shared` does not carry it, so a channel stays unknown
+   * until a message event arrives from it.
    */
-  setMessageRequiredTeams(channelId: string, messageTs: string, teams: string[]): void {
+  setChannelPrivacy(channelId: string, isPrivate: boolean, now = Date.now()): void {
     this.db
-      .update(prMessages)
-      .set({ requiredTeam: JSON.stringify(teams) })
-      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
+      .insert(slackChannels)
+      .values({ channelId, isPrivate, updatedAt: now })
+      .onConflictDoUpdate({
+        target: slackChannels.channelId,
+        set: { isPrivate, updatedAt: now },
+      })
       .run();
   }
 
-  /**
-   * The resolved GitHub team slugs for a message. Empty array if none set.
-   *
-   * Takes the first *non-null* row rather than the first row, for the same
-   * reason `messageReaction` does: a row inserted when a new PR link is added to
-   * a message that already resolved to a team starts with `required_team` null,
-   * and reading that row would report the message as having no team context.
-   */
-  messageRequiredTeams(channelId: string, messageTs: string): string[] {
-    const rows = this.db
-      .select({ requiredTeam: prMessages.requiredTeam })
-      .from(prMessages)
-      .where(and(eq(prMessages.channelId, channelId), eq(prMessages.messageTs, messageTs)))
-      .all();
-    const requiredTeam = rows.find((r) => r.requiredTeam !== null)?.requiredTeam;
-    if (!requiredTeam) return [];
-    try {
-      const parsed = JSON.parse(requiredTeam);
-      return Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-      return [requiredTeam];
-    }
+  /** Whether a channel is private, or undefined if we have never seen a message there. */
+  isChannelPrivate(channelId: string): boolean | undefined {
+    const row = this.db
+      .select({ isPrivate: slackChannels.isPrivate })
+      .from(slackChannels)
+      .where(eq(slackChannels.channelId, channelId))
+      .get();
+    return row?.isPrivate;
   }
 
   getPr(id: number): TrackedPr | undefined {

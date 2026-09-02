@@ -332,6 +332,145 @@ describe('computeCodeownerState', () => {
     }
   });
 
+  describe("a private channel's team view", () => {
+    // Only a private channel gets this: one team is in the room, so the reaction
+    // answers "do we still owe a review?" rather than "is this PR ready?".
+    const TEAM = 'monetization-team';
+
+    const withGroups = (groups: Record<string, boolean>): CodeownerStatus => {
+      const requirements = Object.entries(groups).map(([team, satisfied]) =>
+        req([team], satisfied),
+      );
+      return {
+        requirements,
+        minimum: null,
+        allSatisfied: requirements.length > 0 && requirements.every((r) => r.satisfied),
+      };
+    };
+
+    /** The five cases agreed for the Monetization channel, REQUIRED_APPROVALS=2. */
+    it('row 1: nothing reviewed and the team owes a review -> no_reviews', () => {
+      const status = withGroups({ [TEAM]: false });
+      expect(computeCodeownerState(makePr('no_reviews', serialise(status)), TEAM)).toBe(
+        'no_reviews',
+      );
+    });
+
+    it('row 2: approvals from others while the team still owes one -> partial', () => {
+      const status = withGroups({ [TEAM]: false });
+      expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('partial');
+    });
+
+    it('row 3: team signed off, count short, nobody else to meet it -> partial', () => {
+      // The team is the only codeowner, so the second approval has to come from
+      // them — they still owe one.
+      const status = withGroups({ [TEAM]: true });
+      expect(computeCodeownerState(makePr('partial', serialise(status)), TEAM)).toBe('partial');
+    });
+
+    it('row 4: team signed off and another group will meet the count -> approved', () => {
+      // This is the upgrade: a single approval, but the team owes nothing more
+      // and frontend's eventual sign-off meets the count.
+      const status = withGroups({ [TEAM]: true, 'frontend-team': false });
+      expect(computeCodeownerState(makePr('partial', serialise(status)), TEAM)).toBe('approved');
+    });
+
+    it('row 5: team signed off and the count is met -> approved', () => {
+      for (const status of [
+        withGroups({ [TEAM]: true }),
+        withGroups({ [TEAM]: true, 'frontend-team': false }),
+        withGroups({ [TEAM]: true, 'frontend-team': true }),
+      ]) {
+        expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('approved');
+      }
+    });
+
+    it('reads an OR group the team belongs to as their own', () => {
+      const status: CodeownerStatus = {
+        requirements: [req([TEAM, 'creator-team'], true)],
+        minimum: null,
+        allSatisfied: true,
+      };
+      expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('approved');
+    });
+
+    it('counts an unsatisfied AND rule even when the team’s OR group is satisfied', () => {
+      const status: CodeownerStatus = {
+        requirements: [req([TEAM], false), req([TEAM, 'creator-team'], true)],
+        minimum: null,
+        allSatisfied: false,
+      };
+      expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('partial');
+    });
+
+    describe('when the team owns none of the changed files', () => {
+      // All they can still owe is a +1 towards the count, so the count alone
+      // answers it. Another group's outstanding review is not this channel's
+      // question: holding at partial over it would ask for an action nobody in
+      // the room can take.
+      it('reports approved once the count is met, whoever is still outstanding', () => {
+        for (const status of [
+          withGroups({ 'push-service': true }),
+          withGroups({ 'push-service': false }),
+          withGroups({ 'push-service': false, 'frontend-team': false }),
+        ]) {
+          expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe(
+            'approved',
+          );
+        }
+      });
+
+      it('asks for the +1 while the count is short', () => {
+        for (const status of [
+          withGroups({ 'push-service': true }),
+          withGroups({ 'push-service': false }),
+        ]) {
+          expect(computeCodeownerState(makePr('partial', serialise(status)), TEAM)).toBe('partial');
+          expect(computeCodeownerState(makePr('no_reviews', serialise(status)), TEAM)).toBe(
+            'no_reviews',
+          );
+        }
+      });
+
+      it('is exactly the approval count, with no codeowner influence at all', () => {
+        const status = withGroups({ 'push-service': false });
+        for (const state of REVIEW_STATES) {
+          expect(computeCodeownerState(makePr(state, serialise(status)), TEAM), state).toBe(state);
+        }
+      });
+    });
+
+    it('leaves the public rule alone for the same statuses', () => {
+      // The private relaxation must not leak: with no team view, an outstanding
+      // group still holds an approved PR back.
+      const status = withGroups({ 'push-service': false });
+      expect(computeCodeownerState(makePr('approved', serialise(status)))).toBe('partial');
+      expect(computeCodeownerState(makePr('partial', serialise(status)))).toBe('partial');
+    });
+
+    it('falls back to the approval count with no codeowner data', () => {
+      for (const state of REVIEW_STATES) {
+        expect(computeCodeownerState(makePr(state, null), TEAM), state).toBe(state);
+        expect(computeCodeownerState(makePr(state, '{not json'), TEAM), state).toBe(state);
+      }
+    });
+
+    it('still defers to terminal and blocking states', () => {
+      const status = withGroups({ [TEAM]: true, 'frontend-team': false });
+      for (const state of PASS_THROUGH) {
+        expect(computeCodeownerState(makePr(state, serialise(status)), TEAM), state).toBe(state);
+      }
+    });
+
+    it('never upgrades without a team view', () => {
+      // The same status that reaches approved for the team must not do so in a
+      // public channel, where other groups are reading.
+      const status = withGroups({ [TEAM]: true, 'frontend-team': false });
+      expect(computeCodeownerState(makePr('partial', serialise(status)))).toBe('partial');
+      expect(computeCodeownerState(makePr('approved', serialise(status)))).toBe('partial');
+    });
+  });
+
   describe('invariants', () => {
     it('never moves a PR that has approvals down to no_reviews', () => {
       // Codeowner status must not strip a reaction off a message that had one.
@@ -344,7 +483,7 @@ describe('computeCodeownerState', () => {
       }
     });
 
-    it('never advances a PR beyond what the approval count earned', () => {
+    it('never advances a PR beyond the approval count without a team view', () => {
       for (const [name, status] of ALL_STATUSES) {
         for (const state of REVIEW_STATES) {
           const actual = computeCodeownerState(makePr(state, serialise(status)));

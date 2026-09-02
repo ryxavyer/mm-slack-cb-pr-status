@@ -72,17 +72,20 @@ const envSchema = z.object({
    * also scan plain message text by default. Both paths are idempotent upserts.
    */
   ENABLE_MESSAGE_SCAN: boolish.default('true'),
-  /** Path to the JSON file mapping Slack channels/groups to GitHub team slugs. */
+  /** Path to the JSON file naming the codeowner bot and mapping private channels to teams. */
   TEAM_MAP_FILE: z.string().optional(),
 });
 
 export interface TeamMap {
   /** GitHub login of the codeowner bot that posts status comments. */
   botLogin: string;
-  /** Slack channel ID → GitHub team slug. */
+  /**
+   * Slack channel ID → GitHub team slug, for private channels.
+   *
+   * Only private channels take a team view, so an entry for a public channel
+   * has no effect — see `computeCodeownerState`.
+   */
   channels: Map<string, string>;
-  /** Slack user group handle (lowercase) → GitHub team slug. */
-  groups: Map<string, string>;
 }
 
 export type EmojiConfig = {
@@ -143,14 +146,7 @@ function loadTeamMap(filePath: string): TeamMap {
     }
   }
 
-  const groups = new Map<string, string>();
-  if (obj['groups'] && typeof obj['groups'] === 'object' && !Array.isArray(obj['groups'])) {
-    for (const [k, v] of Object.entries(obj['groups'] as Record<string, unknown>)) {
-      if (typeof v === 'string' && v) groups.set(k.toLowerCase(), v);
-    }
-  }
-
-  return { botLogin: obj['botLogin'], channels, groups };
+  return { botLogin: obj['botLogin'], channels };
 }
 
 const orNull = (s: string): string | null => (s === '' ? null : s);

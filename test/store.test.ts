@@ -208,47 +208,24 @@ describe('Store', () => {
     expect(store.findPr(other)).toBeUndefined();
   });
 
-  describe('messageRequiredTeams', () => {
-    it('returns empty array when no team has been set', () => {
-      const pr = store.upsertPr(ref, 2);
-      store.linkMessage(pr.id, 'C1', '111.1');
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual([]);
+  describe('channel privacy', () => {
+    it('is undefined for a channel we have never seen a message in', () => {
+      expect(store.isChannelPrivate('C_UNSEEN')).toBeUndefined();
     });
 
-    it('stores and returns a single-team array', () => {
-      const pr = store.upsertPr(ref, 2);
-      store.linkMessage(pr.id, 'C1', '111.1');
-      store.setMessageRequiredTeams('C1', '111.1', ['creator-team']);
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['creator-team']);
+    it('records and reads back both kinds of channel', () => {
+      store.setChannelPrivacy('C_PUBLIC', false);
+      store.setChannelPrivacy('C_PRIVATE', true);
+
+      expect(store.isChannelPrivate('C_PUBLIC')).toBe(false);
+      expect(store.isChannelPrivate('C_PRIVATE')).toBe(true);
     });
 
-    it('stores and returns multiple teams', () => {
-      const pr = store.upsertPr(ref, 2);
-      store.linkMessage(pr.id, 'C1', '111.1');
-      store.setMessageRequiredTeams('C1', '111.1', ['creator-team', 'platform-team']);
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['creator-team', 'platform-team']);
+    it('updates a channel that changed privacy', () => {
+      store.setChannelPrivacy('C1', false);
+      store.setChannelPrivacy('C1', true);
+      expect(store.isChannelPrivate('C1')).toBe(true);
     });
-
-    it('setMessageRequiredTeams overwrites existing teams', () => {
-      const pr = store.upsertPr(ref, 2);
-      store.linkMessage(pr.id, 'C1', '111.1');
-      store.setMessageRequiredTeams('C1', '111.1', ['creator-team']);
-      store.setMessageRequiredTeams('C1', '111.1', ['platform-team', 'design-team']);
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['platform-team', 'design-team']);
-    });
-
-    it('reads past a link row added after the team was resolved', () => {
-      const first = store.upsertPr(ref, 2);
-      store.linkMessage(first.id, 'C1', '111.1');
-      store.setMessageRequiredTeams('C1', '111.1', ['creator-team']);
-
-      // A second PR link on the same message inserts a row with a null
-      // required_team; the message's team context must survive it.
-      const second = store.upsertPr(other, 2);
-      store.linkMessage(second.id, 'C1', '111.1');
-
-      expect(store.messageRequiredTeams('C1', '111.1')).toEqual(['creator-team']);
-    });
-
   });
+
 });
