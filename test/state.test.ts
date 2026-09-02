@@ -13,6 +13,7 @@ import {
 
 const emoji: EmojiConfig = {
   changesRequested: 'request-changes',
+  noReviews: 'please',
   partial: '1of2',
   approved: 'white_check_mark',
   merged: 'merged',
@@ -159,7 +160,7 @@ describe('aggregateState', () => {
 
 describe('emojiForState', () => {
   it('maps each state to its configured emoji', () => {
-    expect(emojiForState('no_reviews', emoji)).toBeNull();
+    expect(emojiForState('no_reviews', emoji)).toBe('please');
     expect(emojiForState('changes_requested', emoji)).toBe('request-changes');
     expect(emojiForState('partial', emoji)).toBe('1of2');
     expect(emojiForState('approved', emoji)).toBe('white_check_mark');
@@ -170,6 +171,8 @@ describe('emojiForState', () => {
 
   it('treats an unset emoji as "no reaction for this state"', () => {
     expect(emojiForState('closed', { ...emoji, closed: null })).toBeNull();
+    // Emptying EMOJI_NO_REVIEWS is how unreviewed PRs go back to bare.
+    expect(emojiForState('no_reviews', { ...emoji, noReviews: null })).toBeNull();
   });
 });
 
@@ -194,247 +197,159 @@ describe('computeCodeownerState', () => {
   const serialise = (status: CodeownerStatus | null): string | null =>
     status === null ? null : JSON.stringify(status);
 
-  // ---------------------------------------------------------------------------
-  // Every shape the codeowner bot's comment can parse into. Named for the
-  // situation on the PR, not the JSON.
-  // ---------------------------------------------------------------------------
   const req = (teams: string[], satisfied: boolean) => ({ teams, satisfied });
 
-  /** "Codeowners reviews satisfied" — the bot's terminal comment. */
-  const DONE_NO_REQS: CodeownerStatus = { requirements: [], minimum: null, allSatisfied: true };
-  /** One team owns the files and has approved. */
-  const DONE_ONE_REQ: CodeownerStatus = {
-    requirements: [req(['creator-team'], true)],
-    minimum: null,
-    allSatisfied: true,
-  };
-  /** Team approved and the bot's own review minimum is met. */
-  const DONE_MIN_MET: CodeownerStatus = {
-    requirements: [req(['creator-team'], true)],
-    minimum: { required: 2, found: 2, met: true },
-    allSatisfied: true,
-  };
-  /** Team approved, but "Need 2 reviews, found 1" is still outstanding. */
-  const DONE_MIN_UNMET: CodeownerStatus = {
-    requirements: [req(['creator-team'], true)],
-    minimum: { required: 2, found: 1, met: false },
-    allSatisfied: false,
-  };
-  /** One team owns the files and has not approved. */
-  const PENDING_ONE: CodeownerStatus = {
-    requirements: [req(['creator-team'], false)],
-    minimum: null,
-    allSatisfied: false,
-  };
-  /** Two owning teams, one done and one not. */
-  const MIXED: CodeownerStatus = {
-    requirements: [req(['creator-team'], true), req(['platform-team'], false)],
-    minimum: null,
-    allSatisfied: false,
-  };
-  /** An OR group satisfied by creator-team, alongside unsatisfied AND rules. */
-  const OR_GROUP: CodeownerStatus = {
-    requirements: [
-      req(['design-system-stewards'], false),
-      req(['viewer-team'], false),
-      req(['viewer-team', 'creator-team'], true),
+  // ---------------------------------------------------------------------------
+  // Every shape the codeowner bot's comment can parse into, split by the only
+  // question the logic now asks of it: is any review group still outstanding?
+  // ---------------------------------------------------------------------------
+  const OUTSTANDING: [string, CodeownerStatus][] = [
+    [
+      'one group, not signed off',
+      { requirements: [req(['creator-team'], false)], minimum: null, allSatisfied: false },
     ],
-    minimum: null,
-    allSatisfied: false,
-  };
-  /** Header recognised but no requirement line parsed out of it. */
-  const NO_REQS_PENDING: CodeownerStatus = {
-    requirements: [],
-    minimum: null,
-    allSatisfied: false,
-  };
-
-  const ALL_STATUSES: [string, CodeownerStatus][] = [
-    ['DONE_NO_REQS', DONE_NO_REQS],
-    ['DONE_ONE_REQ', DONE_ONE_REQ],
-    ['DONE_MIN_MET', DONE_MIN_MET],
-    ['DONE_MIN_UNMET', DONE_MIN_UNMET],
-    ['PENDING_ONE', PENDING_ONE],
-    ['MIXED', MIXED],
-    ['OR_GROUP', OR_GROUP],
-    ['NO_REQS_PENDING', NO_REQS_PENDING],
+    [
+      'one group done, one not',
+      {
+        requirements: [req(['creator-team'], true), req(['platform-team'], false)],
+        minimum: null,
+        allSatisfied: false,
+      },
+    ],
+    [
+      'an OR group satisfied but AND rules outstanding',
+      {
+        requirements: [
+          req(['design-system-stewards'], false),
+          req(['viewer-team'], false),
+          req(['viewer-team', 'creator-team'], true),
+        ],
+        minimum: null,
+        allSatisfied: false,
+      },
+    ],
   ];
 
-  // ---------------------------------------------------------------------------
-  // The three states codeowner data is allowed to act on. Every case below says
-  // what each of them maps to, so no combination is left unasserted.
-  // ---------------------------------------------------------------------------
+  const SETTLED: [string, CodeownerStatus][] = [
+    [
+      'the terminal "reviews satisfied" comment',
+      { requirements: [], minimum: null, allSatisfied: true },
+    ],
+    [
+      'every group signed off',
+      { requirements: [req(['creator-team'], true)], minimum: null, allSatisfied: true },
+    ],
+    [
+      'every group signed off, minimum met',
+      {
+        requirements: [req(['creator-team'], true)],
+        minimum: { required: 2, found: 2, met: true },
+        allSatisfied: true,
+      },
+    ],
+    [
+      // The bot's own minimum is deliberately not consulted: REQUIRED_APPROVALS
+      // is the count that decides, and every group has signed off.
+      'every group signed off, but the bot minimum is outstanding',
+      {
+        requirements: [req(['creator-team'], true)],
+        minimum: { required: 2, found: 1, met: false },
+        allSatisfied: false,
+      },
+    ],
+    [
+      'a header the parser found no groups in',
+      { requirements: [], minimum: null, allSatisfied: false },
+    ],
+  ];
+
   const REVIEW_STATES = ['no_reviews', 'partial', 'approved'] as const;
-  type ReviewState = (typeof REVIEW_STATES)[number];
-  type Expected = Record<ReviewState, PrState>;
+  const PASS_THROUGH = ['merged', 'closed', 'unknown', 'changes_requested'] as const;
+  const ALL_STATUSES = [...OUTSTANDING, ...SETTLED];
 
-  /** Codeowner data changed nothing — the approval count stands. */
-  const UNCHANGED: Expected = {
-    no_reviews: 'no_reviews',
-    partial: 'partial',
-    approved: 'approved',
-  };
-  /** The bot declared it done; that outranks the approval count either way. */
-  const ALWAYS_APPROVED: Expected = {
-    no_reviews: 'approved',
-    partial: 'approved',
-    approved: 'approved',
-  };
-  /** Held back from the green check, but never stripped down to no emoji. */
-  const CAPPED_AT_PARTIAL: Expected = {
-    no_reviews: 'no_reviews',
-    partial: 'partial',
-    approved: 'partial',
-  };
-  /** The team is done but a review minimum is not: partial regardless. */
-  const ALWAYS_PARTIAL: Expected = {
-    no_reviews: 'partial',
-    partial: 'partial',
-    approved: 'partial',
-  };
+  describe('with a review group still outstanding', () => {
+    for (const [name, status] of OUTSTANDING) {
+      describe(name, () => {
+        it('holds an otherwise-approved PR at partial', () => {
+          expect(computeCodeownerState(makePr('approved', serialise(status)))).toBe('partial');
+        });
 
-  function expectAcrossStates(
-    status: CodeownerStatus | null,
-    teamSlug: string | undefined,
-    expected: Expected,
-  ): void {
-    for (const state of REVIEW_STATES) {
-      const actual = computeCodeownerState(makePr(state, serialise(status)), teamSlug);
-      expect(actual, `pr.state=${state} team=${teamSlug ?? '(none)'} → ${expected[state]}`).toBe(
-        expected[state],
-      );
+        it('leaves a partial PR at partial', () => {
+          expect(computeCodeownerState(makePr('partial', serialise(status)))).toBe('partial');
+        });
+
+        it('leaves an unreviewed PR at no_reviews', () => {
+          expect(computeCodeownerState(makePr('no_reviews', serialise(status)))).toBe('no_reviews');
+        });
+      });
     }
-  }
+  });
 
-  describe('terminal and blocking states pass through untouched', () => {
-    const PASS_THROUGH = ['merged', 'closed', 'unknown', 'changes_requested'] as const;
+  describe('with no review group outstanding', () => {
+    for (const [name, status] of SETTLED) {
+      it(`leaves the approval count alone for ${name}`, () => {
+        for (const state of REVIEW_STATES) {
+          expect(computeCodeownerState(makePr(state, serialise(status))), state).toBe(state);
+        }
+      });
+    }
 
+    it('does not promote a PR that has not met REQUIRED_APPROVALS', () => {
+      // The bot saying every group is happy is not the same as the repo's own
+      // approval count being met, and the count is what decides.
+      const settled: CodeownerStatus = {
+        requirements: [req(['creator-team'], true)],
+        minimum: null,
+        allSatisfied: true,
+      };
+      expect(computeCodeownerState(makePr('partial', serialise(settled)))).toBe('partial');
+      expect(computeCodeownerState(makePr('no_reviews', serialise(settled)))).toBe('no_reviews');
+    });
+  });
+
+  describe('with no usable codeowner data', () => {
+    it('falls back to pr.state when the bot has not commented', () => {
+      for (const state of REVIEW_STATES) {
+        expect(computeCodeownerState(makePr(state, null)), state).toBe(state);
+      }
+    });
+
+    it('falls back to pr.state when the stored JSON will not parse', () => {
+      for (const state of REVIEW_STATES) {
+        expect(computeCodeownerState(makePr(state, '{not json')), state).toBe(state);
+      }
+    });
+  });
+
+  describe('terminal and blocking states', () => {
     for (const state of PASS_THROUGH) {
-      it(`keeps ${state} for every codeowner status, with and without a team`, () => {
+      it(`keeps ${state} for every codeowner status`, () => {
         for (const [name, status] of ALL_STATUSES) {
-          for (const teamSlug of [undefined, 'creator-team', 'messaging-pod']) {
-            const actual = computeCodeownerState(makePr(state, serialise(status)), teamSlug);
-            expect(actual, `${state} + ${name} + team=${teamSlug ?? '(none)'}`).toBe(state);
-          }
+          expect(computeCodeownerState(makePr(state, serialise(status))), name).toBe(state);
+          expect(computeCodeownerState(makePr(state, null)), name).toBe(state);
         }
       });
     }
   });
 
-  describe('with no usable codeowner data', () => {
-    it('falls back to pr.state when the bot has not commented', () => {
-      expectAcrossStates(null, undefined, UNCHANGED);
-      expectAcrossStates(null, 'creator-team', UNCHANGED);
-    });
-
-    it('falls back to pr.state when the stored JSON will not parse', () => {
-      for (const state of REVIEW_STATES) {
-        expect(computeCodeownerState(makePr(state, '{not json'), undefined)).toBe(state);
-        expect(computeCodeownerState(makePr(state, '{not json'), 'creator-team')).toBe(state);
+  describe('invariants', () => {
+    it('never moves a PR that has approvals down to no_reviews', () => {
+      // Codeowner status must not strip a reaction off a message that had one.
+      for (const [name, status] of ALL_STATUSES) {
+        for (const state of ['partial', 'approved'] as const) {
+          expect(computeCodeownerState(makePr(state, serialise(status))), `${state} + ${name}`).not.toBe(
+            'no_reviews',
+          );
+        }
       }
     });
-  });
 
-  describe('when the bot reports every requirement satisfied', () => {
-    // This is the one signal that applies with or without a team: the bot knows
-    // the repo's real rule, so a single approval from the owning team can settle
-    // a PR that REQUIRED_APPROVALS alone would still call partial.
-    for (const [name, status] of [
-      ['the terminal "reviews satisfied" comment', DONE_NO_REQS],
-      ['an approved single requirement', DONE_ONE_REQ],
-      ['an approved requirement with the minimum met', DONE_MIN_MET],
-    ] as [string, CodeownerStatus][]) {
-      it(`reports approved for ${name}, in any channel context`, () => {
-        expectAcrossStates(status, undefined, ALWAYS_APPROVED);
-        expectAcrossStates(status, 'creator-team', ALWAYS_APPROVED);
-        expectAcrossStates(status, 'messaging-pod', ALWAYS_APPROVED);
-      });
-    }
-  });
-
-  describe('without a teamSlug and with work outstanding', () => {
-    // Nothing here can raise the state, and with no team in the picture there is
-    // nobody whose outstanding review would justify lowering it.
-    for (const [name, status] of [
-      ['DONE_MIN_UNMET', DONE_MIN_UNMET],
-      ['PENDING_ONE', PENDING_ONE],
-      ['MIXED', MIXED],
-      ['OR_GROUP', OR_GROUP],
-      ['NO_REQS_PENDING', NO_REQS_PENDING],
-    ] as [string, CodeownerStatus][]) {
-      it(`leaves the approval count alone for ${name}`, () => {
-        expectAcrossStates(status, undefined, UNCHANGED);
-      });
-    }
-  });
-
-  describe('with a teamSlug the PR does not involve', () => {
-    // messaging-pod owns none of the changed files, so another team's
-    // outstanding requirement says nothing about what this channel is waiting on.
-    for (const [name, status] of [
-      ['DONE_MIN_UNMET', DONE_MIN_UNMET],
-      ['PENDING_ONE', PENDING_ONE],
-      ['MIXED', MIXED],
-      ['OR_GROUP', OR_GROUP],
-      ['NO_REQS_PENDING', NO_REQS_PENDING],
-    ] as [string, CodeownerStatus][]) {
-      it(`falls back to the approval count for ${name}`, () => {
-        expectAcrossStates(status, 'messaging-pod', UNCHANGED);
-      });
-    }
-  });
-
-  describe('with a teamSlug that still owes a review', () => {
-    it('caps a single unsatisfied requirement at partial', () => {
-      expectAcrossStates(PENDING_ONE, 'creator-team', CAPPED_AT_PARTIAL);
-    });
-
-    it('caps the team that has not approved in a mixed status', () => {
-      expectAcrossStates(MIXED, 'platform-team', CAPPED_AT_PARTIAL);
-    });
-
-    it('counts an unsatisfied AND requirement even when an OR group is satisfied', () => {
-      expectAcrossStates(OR_GROUP, 'viewer-team', CAPPED_AT_PARTIAL);
-    });
-
-    it('caps a team whose only requirement is unsatisfied in an OR-group status', () => {
-      expectAcrossStates(OR_GROUP, 'design-system-stewards', CAPPED_AT_PARTIAL);
-    });
-  });
-
-  describe('with a teamSlug that has signed off', () => {
-    it('reports approved when the team is done and others are not', () => {
-      expectAcrossStates(MIXED, 'creator-team', ALWAYS_APPROVED);
-    });
-
-    it('reports approved when only the team’s OR group is satisfied', () => {
-      expectAcrossStates(OR_GROUP, 'creator-team', ALWAYS_APPROVED);
-    });
-
-    it('holds at partial when the bot’s review minimum is still outstanding', () => {
-      expectAcrossStates(DONE_MIN_UNMET, 'creator-team', ALWAYS_PARTIAL);
-    });
-  });
-
-  describe('the regression this logic caused once', () => {
-    // Codeowner status must never take a message from an emoji down to none:
-    // "no codeowner sign-off yet" and "nobody has looked at this" are different
-    // things, and collapsing them strips the reaction off the message.
-    it('never maps a reviewed PR to no_reviews', () => {
+    it('never advances a PR beyond what the approval count earned', () => {
       for (const [name, status] of ALL_STATUSES) {
-        for (const teamSlug of [
-          undefined,
-          'creator-team',
-          'platform-team',
-          'viewer-team',
-          'design-system-stewards',
-          'messaging-pod',
-        ]) {
-          for (const state of ['partial', 'approved'] as const) {
-            const actual = computeCodeownerState(makePr(state, serialise(status)), teamSlug);
-            expect(actual, `${state} + ${name} + team=${teamSlug ?? '(none)'}`).not.toBe(
-              'no_reviews',
-            );
+        for (const state of REVIEW_STATES) {
+          const actual = computeCodeownerState(makePr(state, serialise(status)));
+          if (state !== 'approved') {
+            expect(actual, `${state} + ${name}`).not.toBe('approved');
           }
         }
       }
@@ -445,6 +360,7 @@ describe('computeCodeownerState', () => {
 describe('managedEmojis', () => {
   it('lists only the emoji the bot may touch', () => {
     expect(managedEmojis(emoji)).toEqual([
+      'please',
       'request-changes',
       '1of2',
       'white_check_mark',
@@ -453,6 +369,7 @@ describe('managedEmojis', () => {
       'sleeping',
     ]);
     expect(managedEmojis({ ...emoji, closed: null })).toEqual([
+      'please',
       'request-changes',
       '1of2',
       'white_check_mark',

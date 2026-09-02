@@ -57,6 +57,7 @@ const envSchema = z.object({
   /** How long to keep showing "unknown" before giving up on a PR entirely. */
   UNREACHABLE_TTL_DAYS: z.coerce.number().int().min(1).default(7),
   EMOJI_CHANGES_REQUESTED: emojiName.default('request-changes'),
+  EMOJI_NO_REVIEWS: emojiName.default('please'),
   EMOJI_PARTIAL: emojiName.default('1of2'),
   EMOJI_APPROVED: emojiName.default('white_check_mark'),
   EMOJI_MERGED: emojiName.default('merged'),
@@ -86,6 +87,7 @@ export interface TeamMap {
 
 export type EmojiConfig = {
   changesRequested: string | null;
+  noReviews: string | null;
   partial: string | null;
   approved: string | null;
   merged: string | null;
@@ -172,6 +174,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     unreachableTtlMs: e.UNREACHABLE_TTL_DAYS * 24 * 60 * 60 * 1000,
     emoji: {
       changesRequested: orNull(e.EMOJI_CHANGES_REQUESTED),
+      noReviews: orNull(e.EMOJI_NO_REVIEWS),
       partial: orNull(e.EMOJI_PARTIAL),
       approved: orNull(e.EMOJI_APPROVED),
       merged: orNull(e.EMOJI_MERGED),

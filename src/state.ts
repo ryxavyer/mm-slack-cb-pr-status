@@ -35,36 +35,27 @@ export function computeState({
 }
 
 /**
- * Determines the emoji state for a PR from the perspective of a specific Slack
- * message, incorporating codeowner status when available.
+ * Applies the codeowner bot's view on top of the approval count.
  *
- * The codeowner bot is the authority on whether a PR is done being reviewed, so
- * `allSatisfied` reports approved from any context — with or without a team. It
- * knows things the raw approval count does not: one approval from the right team
- * can satisfy the repo where `REQUIRED_APPROVALS` alone would still read as
- * partial.
+ * The approval count decides the state. Codeowner data contributes exactly one
+ * thing: while any review group is still outstanding the PR is not finished, so
+ * it may not show as approved.
  *
- * The rest of the codeowner detail answers a narrower question — "does *this*
- * team still owe a review?" — and only applies when the message resolved to a
- * team, via the team map or a group mention. With a `teamSlug`:
- *   - Team's requirements satisfied + minimum met → approved
- *   - Team's requirements satisfied + minimum outstanding → partial
- *   - Team still owes a review → whatever the approval count earned, capped
- *     below approved (an otherwise-approved PR shows partial)
- *   - Team in no requirement (PR doesn't touch their files) → pr.state
+ *   - approved + a group outstanding -> partial
+ *   - anything else                  -> the count's own answer
  *
- * Without a `teamSlug` there is no team whose outstanding review could hold the
- * PR back, so codeowner data can only ever raise the state, never lower it.
+ * It only ever holds a PR back, never advances one: a bot reporting every group
+ * satisfied does not by itself make a PR approved, because `REQUIRED_APPROVALS`
+ * still has to be met.
  *
- * In neither case may codeowner status take a message from an emoji down to
- * none. "No codeowner sign-off yet" and "nobody has looked at this at all" are
- * different things, and collapsing the first into the second silently strips the
- * reaction off the message.
+ * Which channel the message is in makes no difference, and the bot's own
+ * "Need N reviews, found M" minimum is deliberately not consulted —
+ * `REQUIRED_APPROVALS` is the only count that decides.
  *
  * Terminal and blocking states (merged, closed, unknown, changes_requested)
- * always pass through unchanged regardless of codeowner context.
+ * always pass through unchanged.
  */
-export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState {
+export function computeCodeownerState(pr: TrackedPr): PrState {
   if (
     pr.state === 'merged' ||
     pr.state === 'closed' ||
@@ -83,29 +74,12 @@ export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState
     return pr.state;
   }
 
-  // Every codeowner requirement is signed off and any minimum is met: the bot
-  // has declared the PR done, which outranks the approval count.
-  if (status.allSatisfied) return 'approved';
+  if (!status.requirements.some((r) => !r.satisfied)) return pr.state;
 
-  // No team context, and the bot has not declared the PR done. Nothing here can
-  // raise the state, and without a team there is nobody whose outstanding review
-  // would justify lowering it.
-  if (!teamSlug) return pr.state;
-
-  // The PR does not touch this team's files, so their codeowner status says
-  // nothing about it either way.
-  const teamReqs = status.requirements.filter((r) => r.teams.includes(teamSlug));
-  if (teamReqs.length === 0) return pr.state;
-
-  // Still waiting on this team: hold back the green check, but keep whatever the
-  // approval count already earned rather than going bare.
-  if (!teamReqs.every((r) => r.satisfied)) {
-    return pr.state === 'approved' ? 'partial' : pr.state;
-  }
-
-  // The team has signed off. A minimum the codeowner bot still reports
-  // outstanding keeps this at partial — GitHub will not let the PR merge yet.
-  return status.minimum === null || status.minimum.met ? 'approved' : 'partial';
+  // A group still owes a review, so the PR is not finished no matter what the
+  // count says. Nothing below approved needs adjusting: it already reads as
+  // unfinished.
+  return pr.state === 'approved' ? 'partial' : pr.state;
 }
 
 /**
@@ -155,13 +129,13 @@ export function aggregateState(states: readonly PrState[]): PrState | null {
 }
 
 /**
- * The single managed emoji for a state, or null when the state should carry no
- * reaction ('no_reviews', or a state whose emoji has been configured empty).
+ * The single managed emoji for a state, or null when that state's emoji has been
+ * configured empty — which is how a state is opted out of carrying a reaction.
  */
 export function emojiForState(state: PrState, emoji: EmojiConfig): string | null {
   switch (state) {
     case 'no_reviews':
-      return null;
+      return emoji.noReviews;
     case 'changes_requested':
       return emoji.changesRequested;
     case 'partial':
@@ -183,6 +157,7 @@ export function emojiForState(state: PrState, emoji: EmojiConfig): string | null
  */
 export function managedEmojis(emoji: EmojiConfig): string[] {
   return [
+    emoji.noReviews,
     emoji.changesRequested,
     emoji.partial,
     emoji.approved,

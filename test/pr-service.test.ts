@@ -108,9 +108,14 @@ describe('PrService', () => {
       github.set(ref, { approvals: 2 });
       await service.runCycle();
 
-      expect(reactions.calls.map((c) => `${c.op}:${c.timestamp}`)).toEqual([
-        'add:111.1',
-        'add:222.2',
+      // Each message gets :please: on tracking, then swaps to the green check.
+      expect(reactions.calls.map((c) => `${c.op}:${c.timestamp}:${c.name}`)).toEqual([
+        'add:111.1:please',
+        'add:222.2:please',
+        'remove:111.1:please',
+        'add:111.1:white_check_mark',
+        'remove:222.2:please',
+        'add:222.2:white_check_mark',
       ]);
     });
 
@@ -133,9 +138,9 @@ describe('PrService', () => {
       // The second link is still tracked and polled despite the first throwing.
       expect(store.findPr(ref)?.state).toBe('no_reviews');
       expect(store.findPr(other)?.state).toBe('approved');
-      // No reaction, though: the message also links a PR we know nothing about,
-      // so it cannot honestly be reported as approved.
-      expect(reactions.calls).toEqual([]);
+      // The message cannot honestly be reported as approved: it also links a PR
+      // we know nothing about, so it carries the no-reviews emoji instead.
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual(['add:please']);
     });
   });
 
@@ -254,7 +259,10 @@ describe('PrService', () => {
     });
   });
 
-  describe('codeowner status end to end', () => {
+  describe('codeowner review groups end to end', () => {
+    // TEAM_MAP_FILE is still what identifies the codeowner bot, so a team map is
+    // required for any codeowner status to be fetched at all. Which channel the
+    // message lands in no longer changes the answer.
     const teamMap = {
       botLogin: 'mmllc-gh',
       channels: new Map([['C_CREATOR', 'creator-team']]),
@@ -262,15 +270,14 @@ describe('PrService', () => {
     };
 
     const DONE = 'Codeowners reviews satisfied';
-    const CREATOR_PENDING = `Codeowners approval required for this PR:
+    const PENDING = `Codeowners approval required for this PR:
 
-@multimediallc/creator-team
-Show detailed file reviewers`;
-    const CREATOR_DONE = `Codeowners approval required for this PR:
+- @multimediallc/creator-team
+<details><summary>Show detailed file reviewers</summary></details>`;
+    const SIGNED_OFF = `Codeowners approval required for this PR:
 
-✅ @multimediallc/creator-team`;
+- \u2705 @multimediallc/creator-team`;
 
-    /** Wires the fake GitHub client to a real codeowner comment body. */
     const withComment = (body: string | null, approvals: number) => {
       github.set(ref, { approvals });
       github.setCodeownerStatus(ref, body === null ? null : parseCodeownerComment(body));
@@ -280,64 +287,58 @@ Show detailed file reviewers`;
 
     beforeEach(() => build({ teamMap }));
 
-    describe('in a channel with no team of its own', () => {
-      it('shows the green check when the bot says the reviews are satisfied', async () => {
-        // The bot knows the repo's real rule: one approval from the owning team
-        // can settle a PR that REQUIRED_APPROVALS alone still calls partial.
-        withComment(DONE, 1);
-        await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+    it('holds a fully approved PR at partial while a group is outstanding', async () => {
+      withComment(PENDING, 2);
+      await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
 
-        expect(store.findPr(ref)?.state).toBe('partial');
-        expect(added()).toBe('white_check_mark');
-      });
-
-      it('keeps the approval count while a codeowner is outstanding', async () => {
-        withComment(CREATOR_PENDING, 1);
-        await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
-
-        expect(added()).toBe('1of2');
-      });
-
-      it('does not hold back a PR with enough approvals for an outstanding codeowner', async () => {
-        withComment(CREATOR_PENDING, 2);
-        await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
-
-        expect(added()).toBe('white_check_mark');
-      });
+      expect(store.findPr(ref)?.state).toBe('approved');
+      expect(added()).toBe('1of2');
     });
 
-    describe('in the owning team’s channel', () => {
-      it('holds an approved PR at partial while that team owes a review', async () => {
-        withComment(CREATOR_PENDING, 2);
-        await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+    it('marks an unreviewed PR as awaiting the group', async () => {
+      withComment(PENDING, 0);
+      await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
 
-        expect(store.findPr(ref)?.state).toBe('approved');
-        expect(added()).toBe('1of2');
-      });
-
-      it('shows the green check once that team approves', async () => {
-        withComment(CREATOR_DONE, 1);
-        await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
-
-        expect(added()).toBe('white_check_mark');
-      });
-
-      it('adds no reaction to a PR nobody has reviewed', async () => {
-        withComment(CREATOR_PENDING, 0);
-        await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
-
-        expect(reactions.calls).toEqual([]);
-      });
+      expect(added()).toBe('please');
     });
 
-    it('moves to the green check on the poll after the codeowner approves', async () => {
-      withComment(CREATOR_PENDING, 1);
+    it('leaves a partly reviewed PR at partial', async () => {
+      withComment(PENDING, 1);
+      await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+
+      expect(added()).toBe('1of2');
+    });
+
+    it('gives the same answer in a mapped channel', async () => {
+      withComment(PENDING, 2);
+      await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
+
+      expect(added()).toBe('1of2');
+    });
+
+    it('shows the green check once the group signs off', async () => {
+      withComment(SIGNED_OFF, 2);
+      await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+
+      expect(added()).toBe('white_check_mark');
+    });
+
+    it('does not promote a PR below REQUIRED_APPROVALS when groups are satisfied', async () => {
+      withComment(DONE, 1);
+      await service.trackLinks('C_OTHER', '111.1', [ref], 'take a look');
+
+      expect(store.findPr(ref)?.state).toBe('partial');
+      expect(added()).toBe('1of2');
+    });
+
+    it('releases the hold on the poll after the group signs off', async () => {
+      withComment(PENDING, 2);
       await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
       expect(added()).toBe('1of2');
       reactions.calls.length = 0;
 
       // Same approval count; only the codeowner comment changed.
-      withComment(CREATOR_DONE, 1);
+      withComment(SIGNED_OFF, 2);
       await service.runCycle();
 
       expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([
@@ -347,28 +348,28 @@ Show detailed file reviewers`;
     });
 
     it('clears a stored codeowner status when the bot deletes its comment', async () => {
-      withComment(CREATOR_DONE, 1);
+      withComment(PENDING, 2);
       await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
-      expect(added()).toBe('white_check_mark');
+      expect(added()).toBe('1of2');
       reactions.calls.length = 0;
 
-      withComment(null, 1);
+      withComment(null, 2);
       await service.runCycle();
 
       expect(store.findPr(ref)?.codeownerStatus).toBeNull();
       expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([
-        ['remove', 'white_check_mark'],
-        ['add', '1of2'],
+        ['remove', '1of2'],
+        ['add', 'white_check_mark'],
       ]);
     });
 
     it('never fetches codeowner status when TEAM_MAP_FILE is not configured', async () => {
       build({ teamMap: null });
-      withComment(DONE, 1);
+      withComment(PENDING, 2);
       await service.trackLinks('C_CREATOR', '111.1', [ref], 'take a look');
 
       expect(store.findPr(ref)?.codeownerStatus).toBeNull();
-      expect(added()).toBe('1of2');
+      expect(added()).toBe('white_check_mark');
     });
   });
 
@@ -379,8 +380,13 @@ Show detailed file reviewers`;
 
       await service.trackLinks('C_WATCHED', '111.1', [ref, other]);
 
-      // One PR approved, one partial → the message still needs eyes.
-      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual(['add:1of2']);
+      // One PR approved, one partial → the message still needs eyes. The first
+      // link lands :please: before the second is tracked and downgrades it.
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
+        'add:please',
+        'remove:please',
+        'add:1of2',
+      ]);
     });
 
     it('does not lose one PR’s status when another shares its emoji and moves on', async () => {
@@ -389,7 +395,7 @@ Show detailed file reviewers`;
       github.set(ref, { approvals: 1 });
       github.set(other, { approvals: 1 });
       await service.trackLinks('C_WATCHED', '111.1', [ref, other]);
-      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual(['add:1of2']);
+      expect(store.messageReaction('C_WATCHED', '111.1')).toBe('1of2');
 
       // First PR gets approved; the second is still only partially reviewed.
       reactions.calls.length = 0;
@@ -450,7 +456,10 @@ Show detailed file reviewers`;
       github.set(ref, { approvals: 1 });
       const first = await service.runCycle();
       expect(first).toMatchObject({ polled: 1, changed: 1, failed: 0 });
-      expect(reactions.calls.map((c) => c.name)).toEqual(['1of2']);
+      expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
+        'remove:please',
+        'add:1of2',
+      ]);
 
       // Nothing changed on the second cycle → no Slack traffic.
       reactions.calls.length = 0;
@@ -476,6 +485,8 @@ Show detailed file reviewers`;
       expect(store.findPr(ref)?.state).toBe('merged');
 
       expect(reactions.calls.map((c) => `${c.op}:${c.name}`)).toEqual([
+        'add:please',
+        'remove:please',
         'add:1of2',
         'remove:1of2',
         'add:white_check_mark',

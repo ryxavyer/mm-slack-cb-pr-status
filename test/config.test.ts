@@ -16,6 +16,7 @@ describe('loadConfig', () => {
     expect(config.databasePath).toBe('/data/bot.sqlite');
     expect(config.emoji).toEqual({
       changesRequested: 'request-changes',
+      noReviews: 'please',
       partial: '1of2',
       approved: 'white_check_mark',
       merged: 'merged',

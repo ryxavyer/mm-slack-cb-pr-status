@@ -4,7 +4,7 @@
  * expect: it shows every input the decision is made from, so you can see which
  * one disagrees with what GitHub's UI is telling you.
  *
- *   GITHUB_TOKEN=ghp_... npx tsx scripts/diagnose-pr.ts <pr-url> [team-slug]
+ *   GITHUB_TOKEN=ghp_... npx tsx scripts/diagnose-pr.ts <pr-url>
  *
  * Reads GITHUB_TOKEN, and optionally REQUIRED_APPROVALS (default 2) and
  * TEAM_MAP_FILE (default ./team-map.json). Read-only — it never touches Slack
@@ -20,6 +20,7 @@ import { computeCodeownerState, computeState, emojiForState } from '../src/state
 
 const emoji: EmojiConfig = {
   changesRequested: process.env['EMOJI_CHANGES_REQUESTED'] ?? 'request-changes',
+  noReviews: process.env['EMOJI_NO_REVIEWS'] ?? 'please',
   partial: process.env['EMOJI_PARTIAL'] ?? '1of2',
   approved: process.env['EMOJI_APPROVED'] ?? 'white_check_mark',
   merged: process.env['EMOJI_MERGED'] ?? 'merged',
@@ -27,9 +28,9 @@ const emoji: EmojiConfig = {
   unknown: process.env['EMOJI_UNKNOWN'] ?? 'sleeping',
 };
 
-const [, , url, teamArg] = process.argv;
+const [, , url] = process.argv;
 if (!url) {
-  console.error('usage: npx tsx scripts/diagnose-pr.ts <pr-url> [team-slug]');
+  console.error('usage: npx tsx scripts/diagnose-pr.ts <pr-url>');
   process.exit(1);
 }
 
@@ -203,16 +204,9 @@ if (merged || closed) {
   console.log('   the states shown use the review state so the derivation stays visible)');
 }
 const forEmoji = { ...tracked, state: reviewState } satisfies TrackedPr;
-const noTeam = computeCodeownerState(forEmoji);
-console.log(
-  `  channel with no team   -> ${noTeam.padEnd(18)} ${emojiForState(noTeam, emoji) ?? '(no reaction)'}`,
-);
-if (teamArg) {
-  const withTeam = computeCodeownerState(forEmoji, teamArg);
-  console.log(
-    `  channel for ${teamArg.padEnd(10)} -> ${withTeam.padEnd(18)} ${emojiForState(withTeam, emoji) ?? '(no reaction)'}`,
-  );
-} else {
-  console.log('  (pass a team slug as the second argument to see a team channel too)');
+const final = computeCodeownerState(forEmoji);
+console.log(`  ${final.padEnd(20)} ${emojiForState(final, emoji) ?? '(no reaction)'}`);
+if (final !== reviewState) {
+  console.log(`  (held back from ${reviewState} by an outstanding review group)`);
 }
 console.log();

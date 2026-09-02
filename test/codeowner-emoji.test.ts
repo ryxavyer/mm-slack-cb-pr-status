@@ -7,15 +7,16 @@ import type { PrState } from '../src/types.js';
 
 /**
  * End to end over the two halves that decide a reaction: what the codeowner
- * bot's comment says, and what that means for the emoji on a given message.
+ * bot's comment says, and what that means on top of the approval count.
  *
- * The comment bodies here are the real shapes mmllc-gh posts. Each case states
- * the emoji for both channel contexts, because the same PR reads differently in
- * a team's own channel than in a general one.
+ * The comment bodies here are the real shapes mmllc-gh posts. The channel a
+ * message is in makes no difference — the count decides, and an outstanding
+ * review group is the one thing that can hold a PR back.
  */
 
 const emoji: EmojiConfig = {
   changesRequested: 'request-changes',
+  noReviews: 'please',
   partial: '1of2',
   approved: 'white_check_mark',
   merged: 'merged',
@@ -23,7 +24,7 @@ const emoji: EmojiConfig = {
   unknown: 'sleeping',
 };
 
-function reactionFor(body: string | null, state: PrState, teamSlug?: string): string | null {
+function reactionFor(body: string | null, state: PrState): string | null {
   const parsed = body === null ? null : parseCodeownerComment(body);
   const pr = {
     id: 1,
@@ -40,25 +41,29 @@ function reactionFor(body: string | null, state: PrState, teamSlug?: string): st
     codeownerStatus: parsed === null ? null : JSON.stringify(parsed),
   } satisfies TrackedPr;
 
-  return emojiForState(computeCodeownerState(pr, teamSlug), emoji);
+  return emojiForState(computeCodeownerState(pr), emoji);
 }
 
 const NONE = null;
 
-describe('codeowner comment → Slack reaction', () => {
-  describe('“Codeowners reviews satisfied”', () => {
-    const body = 'Codeowners reviews satisfied';
+describe('codeowner comment -> Slack reaction', () => {
+  describe('a group still owes a review', () => {
+    const body = [
+      'Codeowners approval required for this PR:',
+      '- @multimediallc/media-library-experts',
+      '<details><summary>Show detailed file reviewers</summary></details>',
+    ].join('\n');
 
-    it('shows the green check even when the approval count says partial', () => {
-      // The reported bug: an unmapped channel fell back to the raw count and
-      // left :1of2: on a PR the bot had already declared done.
-      expect(reactionFor(body, 'partial')).toBe('white_check_mark');
-      expect(reactionFor(body, 'partial', 'creator-team')).toBe('white_check_mark');
+    it('holds a PR with enough approvals at partial', () => {
+      expect(reactionFor(body, 'approved')).toBe('1of2');
     });
 
-    it('shows the green check when the approval count agrees', () => {
-      expect(reactionFor(body, 'approved')).toBe('white_check_mark');
-      expect(reactionFor(body, 'approved', 'creator-team')).toBe('white_check_mark');
+    it('leaves a partly reviewed PR at partial', () => {
+      expect(reactionFor(body, 'partial')).toBe('1of2');
+    });
+
+    it('marks an unreviewed PR as needing a reviewer', () => {
+      expect(reactionFor(body, 'no_reviews')).toBe('please');
     });
 
     it('still defers to merged, closed and blocking states', () => {
@@ -69,105 +74,94 @@ describe('codeowner comment → Slack reaction', () => {
     });
   });
 
-  describe('one team outstanding, one approved', () => {
-    const body = `Codeowners approval required for this PR:
+  describe('one group outstanding among several', () => {
+    const body = [
+      'Codeowners approval required for this PR:',
+      '- @multimediallc/creator-team',
+      '- ✅ @multimediallc/messaging-pod',
+      '<details><summary>Show detailed file reviewers</summary></details>',
+    ].join('\n');
 
-@multimediallc/creator-team
-✅ @multimediallc/messaging-pod
-Show detailed file reviewers`;
-
-    it('keeps the approval count in a channel with no team', () => {
-      expect(reactionFor(body, 'approved')).toBe('white_check_mark');
+    it('holds the PR back until every group has signed off', () => {
+      expect(reactionFor(body, 'approved')).toBe('1of2');
       expect(reactionFor(body, 'partial')).toBe('1of2');
-      expect(reactionFor(body, 'no_reviews')).toBe(NONE);
-    });
-
-    it('holds back the green check in the outstanding team’s channel', () => {
-      expect(reactionFor(body, 'approved', 'creator-team')).toBe('1of2');
-      expect(reactionFor(body, 'partial', 'creator-team')).toBe('1of2');
-      expect(reactionFor(body, 'no_reviews', 'creator-team')).toBe(NONE);
-    });
-
-    it('shows the green check in the approved team’s channel', () => {
-      expect(reactionFor(body, 'approved', 'messaging-pod')).toBe('white_check_mark');
-      expect(reactionFor(body, 'partial', 'messaging-pod')).toBe('white_check_mark');
-    });
-
-    it('keeps the approval count for a team the PR does not involve', () => {
-      expect(reactionFor(body, 'approved', 'viewer-team')).toBe('white_check_mark');
-      expect(reactionFor(body, 'partial', 'viewer-team')).toBe('1of2');
+      expect(reactionFor(body, 'no_reviews')).toBe('please');
     });
   });
 
-  describe('team approved but the review minimum is not met', () => {
-    const body = `Codeowners approval required for this PR:
+  describe('every group has signed off', () => {
+    const body = [
+      'Codeowners approval required for this PR:',
+      '- ✅ @multimediallc/media-library-experts',
+      '',
+      '<details><summary>Show detailed file reviewers</summary>',
+      '',
+      '</details>',
+    ].join('\n');
 
-✅ @multimediallc/viewer-team
-Minimum review requirement not met. Need 2 reviews, found 1. Reviews have been re-requested from owning teams, but any additional approval can satisfy minimum.`;
-
-    it('keeps the approval count in a channel with no team', () => {
-      expect(reactionFor(body, 'partial')).toBe('1of2');
+    it('lets the approval count through untouched', () => {
       expect(reactionFor(body, 'approved')).toBe('white_check_mark');
+      expect(reactionFor(body, 'partial')).toBe('1of2');
+      expect(reactionFor(body, 'no_reviews')).toBe('please');
     });
 
-    it('holds at partial in the team’s channel — the PR still cannot merge', () => {
-      expect(reactionFor(body, 'partial', 'viewer-team')).toBe('1of2');
-      expect(reactionFor(body, 'approved', 'viewer-team')).toBe('1of2');
+    it('does not promote a PR that has not met REQUIRED_APPROVALS', () => {
+      // The bot being happy is not the repo's approval count being met.
+      expect(reactionFor(body, 'partial')).not.toBe('white_check_mark');
+    });
+  });
+
+  describe('the terminal all-clear comment', () => {
+    const body = 'Codeowners reviews satisfied';
+
+    it('lets the approval count through untouched', () => {
+      expect(reactionFor(body, 'approved')).toBe('white_check_mark');
+      expect(reactionFor(body, 'partial')).toBe('1of2');
+      expect(reactionFor(body, 'no_reviews')).toBe('please');
     });
   });
 
   describe('a satisfied OR group alongside outstanding AND rules', () => {
-    const body = `Codeowners approval required for this PR:
+    const body = [
+      'Codeowners approval required for this PR:',
+      '- @multimediallc/design-system-stewards',
+      '- @multimediallc/viewer-team',
+      '- ✅ @multimediallc/viewer-team or @multimediallc/creator-team',
+      '<details><summary>Show detailed file reviewers</summary></details>',
+    ].join('\n');
 
-@multimediallc/design-system-stewards
-@multimediallc/viewer-team
-✅ @multimediallc/viewer-team or @multimediallc/creator-team
-Show detailed file reviewers`;
-
-    it('shows the green check for the team whose OR group is satisfied', () => {
-      expect(reactionFor(body, 'partial', 'creator-team')).toBe('white_check_mark');
-    });
-
-    it('holds back viewer-team, which also has an unsatisfied AND rule', () => {
-      expect(reactionFor(body, 'approved', 'viewer-team')).toBe('1of2');
-    });
-
-    it('holds back design-system-stewards, which has not approved', () => {
-      expect(reactionFor(body, 'approved', 'design-system-stewards')).toBe('1of2');
-    });
-
-    it('keeps the approval count in a channel with no team', () => {
-      expect(reactionFor(body, 'approved')).toBe('white_check_mark');
-      expect(reactionFor(body, 'partial')).toBe('1of2');
+    it('still counts the outstanding AND rules', () => {
+      expect(reactionFor(body, 'approved')).toBe('1of2');
+      expect(reactionFor(body, 'no_reviews')).toBe('please');
     });
   });
 
-  describe('every requirement approved', () => {
-    const body = `Codeowners approval required for this PR:
+  describe('the bot review minimum', () => {
+    // REQUIRED_APPROVALS is the count that decides; the bot's own minimum is
+    // deliberately not consulted.
+    const body = [
+      'Codeowners approval required for this PR:',
+      '- ✅ @multimediallc/viewer-team',
+      '- Minimum review requirement not met. Need 2 reviews, found 1.',
+    ].join('\n');
 
-✅ @multimediallc/creator-team
-✅ @multimediallc/platform-team`;
-
-    it('shows the green check in every context', () => {
-      for (const teamSlug of [undefined, 'creator-team', 'platform-team', 'messaging-pod']) {
-        expect(reactionFor(body, 'partial', teamSlug), `team=${teamSlug}`).toBe('white_check_mark');
-        expect(reactionFor(body, 'no_reviews', teamSlug), `team=${teamSlug}`).toBe(
-          'white_check_mark',
-        );
-      }
+    it('does not hold back a PR whose groups have all signed off', () => {
+      expect(reactionFor(body, 'approved')).toBe('white_check_mark');
+      expect(reactionFor(body, 'partial')).toBe('1of2');
     });
   });
 
   describe('a comment the parser does not recognise', () => {
     it('leaves the approval count untouched', () => {
       expect(reactionFor('LGTM!', 'partial')).toBe('1of2');
-      expect(reactionFor('LGTM!', 'partial', 'creator-team')).toBe('1of2');
-      expect(reactionFor('LGTM!', 'approved', 'creator-team')).toBe('white_check_mark');
+      expect(reactionFor('LGTM!', 'approved')).toBe('white_check_mark');
+      expect(reactionFor('LGTM!', 'no_reviews')).toBe('please');
     });
 
     it('leaves the approval count untouched when the bot has not commented', () => {
-      expect(reactionFor(NONE, 'partial', 'creator-team')).toBe('1of2');
+      expect(reactionFor(NONE, 'partial')).toBe('1of2');
       expect(reactionFor(NONE, 'approved')).toBe('white_check_mark');
+      expect(reactionFor(NONE, 'no_reviews')).toBe('please');
     });
   });
 });

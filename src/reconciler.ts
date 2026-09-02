@@ -86,13 +86,7 @@ export class Reconciler {
   ): Promise<ReconcileSummary> {
     const summary = emptySummary();
     const prs = this.store.prsForMessage(channelId, messageTs);
-    const requiredTeams = this.store.messageRequiredTeams(channelId, messageTs);
-    const state = aggregateState(
-      prs.map((p) => {
-        if (requiredTeams.length === 0) return computeCodeownerState(p);
-        return aggregateState(requiredTeams.map((t) => computeCodeownerState(p, t))) ?? p.state;
-      }),
-    );
+    const state = aggregateState(prs.map((p) => computeCodeownerState(p)));
     const target = state ? emojiForState(state, this.emoji) : null;
     const current =
       knownCurrent !== undefined ? knownCurrent : this.store.messageReaction(channelId, messageTs);
