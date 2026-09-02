@@ -85,12 +85,32 @@ for (const r of reviews) {
 }
 if (reviews.length === 0) console.log('  (none)');
 
+const requestedReviewers = pr.requested_reviewers ?? [];
+heading('review requests currently outstanding');
+if (requestedReviewers.length === 0) {
+  console.log('  (none)');
+} else {
+  for (const u of requestedReviewers) console.log(`  id:${u.id} ${u.login}`);
+  console.log('  (a reviewer here has been asked to look again: their last');
+  console.log('   review is superseded and counts for neither side)');
+}
+for (const t of pr.requested_teams ?? []) {
+  console.log(`  team @${t.slug} - NOTE: team requests do not supersede an`);
+  console.log('   individual member\'s earlier review');
+}
+
 heading('each reviewer current position (COMMENTED/PENDING dropped)');
+const superseded = new Set(
+  requestedReviewers.map((u) => (typeof u.id === 'number' ? `id:${u.id}` : `login:${u.login.toLowerCase()}`)),
+);
 const positions = latestReviewByReviewer(reviews);
-for (const [key, position] of positions) console.log(`  ${key.padEnd(28)} ${position}`);
+for (const [key, position] of positions) {
+  const note = superseded.has(key) ? '  <- superseded by a re-request' : '';
+  console.log(`  ${key.padEnd(28)} ${position}${note}`);
+}
 if (positions.size === 0) console.log('  (none)');
 
-const summary = summariseReviews(reviews);
+const summary = summariseReviews(reviews, requestedReviewers);
 const merged = Boolean(pr.merged ?? pr.merged_at);
 const closed = pr.state === 'closed';
 const state = computeState({

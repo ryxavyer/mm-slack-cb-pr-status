@@ -101,6 +101,86 @@ describe('countApprovals', () => {
   });
 });
 
+describe('re-requested reviews', () => {
+  // GitHub does not touch a review when its author is asked to look again: the
+  // review keeps its CHANGES_REQUESTED state and the reviewer is simply added
+  // back to the PR's requested_reviewers. Without reading that list, a single
+  // changes-requested review blocks a PR permanently.
+  const user = (id: number) => ({ id, login: `user${id}` });
+
+  it('stops a re-requested changes-requested review from blocking', () => {
+    const reviews = [review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z')];
+
+    expect(summariseReviews(reviews)).toEqual({ approvals: 0, changesRequested: 1 });
+    expect(summariseReviews(reviews, [user(1)])).toEqual({ approvals: 0, changesRequested: 0 });
+  });
+
+  it('drops the approval of a reviewer who has been asked to look again', () => {
+    const reviews = [
+      review(1, 'APPROVED', '2026-08-01T10:00:00Z'),
+      review(2, 'APPROVED', '2026-08-01T11:00:00Z'),
+    ];
+
+    expect(summariseReviews(reviews)).toEqual({ approvals: 2, changesRequested: 0 });
+    expect(summariseReviews(reviews, [user(1)])).toEqual({ approvals: 1, changesRequested: 0 });
+  });
+
+  it('leaves other reviewers untouched', () => {
+    const reviews = [
+      review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z'),
+      review(2, 'CHANGES_REQUESTED', '2026-08-01T11:00:00Z'),
+      review(3, 'APPROVED', '2026-08-01T12:00:00Z'),
+    ];
+
+    expect(summariseReviews(reviews, [user(1)])).toEqual({ approvals: 1, changesRequested: 1 });
+  });
+
+  it('matches by login when the reviewer has no id', () => {
+    const byLogin = [
+      { user: { login: 'Octocat' }, state: 'CHANGES_REQUESTED', submitted_at: '2026-08-01T10:00:00Z' },
+    ];
+
+    expect(summariseReviews(byLogin)).toEqual({ approvals: 0, changesRequested: 1 });
+    // Case-insensitive, as reviewerKey lower-cases both sides.
+    expect(summariseReviews(byLogin, [{ login: 'octocat' }])).toEqual({
+      approvals: 0,
+      changesRequested: 0,
+    });
+  });
+
+  it('ignores a request for a reviewer who has never reviewed', () => {
+    const reviews = [review(1, 'APPROVED', '2026-08-01T10:00:00Z')];
+
+    // A first-time reviewer sits in requested_reviewers too; they have no
+    // position to supersede.
+    expect(summariseReviews(reviews, [user(9)])).toEqual({ approvals: 1, changesRequested: 0 });
+  });
+
+  it('re-blocks once the reviewer submits changes-requested again', () => {
+    // The author pushed a fix and re-requested; the reviewer looked and is still
+    // unhappy. Submitting a review clears them from requested_reviewers.
+    const reviews = [
+      review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z'),
+      review(1, 'CHANGES_REQUESTED', '2026-08-02T10:00:00Z'),
+    ];
+
+    expect(summariseReviews(reviews, [])).toEqual({ approvals: 0, changesRequested: 1 });
+  });
+
+  it('an empty request list changes nothing', () => {
+    const reviews = [review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z')];
+    expect(summariseReviews(reviews, [])).toEqual(summariseReviews(reviews));
+  });
+
+  it('countApprovals honours re-requests too', () => {
+    const reviews = [
+      review(1, 'APPROVED', '2026-08-01T10:00:00Z'),
+      review(2, 'APPROVED', '2026-08-01T11:00:00Z'),
+    ];
+    expect(countApprovals(reviews, [user(2)])).toBe(1);
+  });
+});
+
 describe('summariseReviews', () => {
   it('counts approvals and blocking reviews side by side', () => {
     // One reviewer approved, another wants changes — the case that drives the

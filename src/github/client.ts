@@ -168,7 +168,9 @@ export class OctokitGitHubClient implements GitHubClient {
         merged: Boolean(pr.merged ?? pr.merged_at),
         closed: pr.state === 'closed',
         draft: Boolean(pr.draft),
-        ...summariseReviews(reviews),
+        // `requested_reviewers` is what makes a re-requested review read as
+        // pending again rather than blocking forever. See summariseReviews.
+        ...summariseReviews(reviews, pr.requested_reviewers ?? []),
         title: pr.title ?? '',
       };
     } catch (error) {
