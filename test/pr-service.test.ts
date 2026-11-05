@@ -247,7 +247,7 @@ describe('PrService', () => {
       stage(ref, 'teamDone');
       await service.trackLinks(TEAM, '111.1', [ref]);
 
-      expect(names()).toEqual(['add:ballot_box_with_check']);
+      expect(names()).toEqual(['add:blue_check_mark']);
     });
 
     it('shows the same PR differently per channel', async () => {
@@ -256,7 +256,7 @@ describe('PrService', () => {
       await service.trackLinks(TEAM, '222.2', [ref]);
 
       expect(store.messageReaction(PUBLIC, '111.1')).toBeNull();
-      expect(store.messageReaction(TEAM, '222.2')).toBe('ballot_box_with_check');
+      expect(store.messageReaction(TEAM, '222.2')).toBe('blue_check_mark');
     });
   });
 
@@ -268,12 +268,12 @@ describe('PrService', () => {
       expect(reactions.calls).toEqual([]);
 
       expect(await service.setChannelTeam('C_PRIVATE', true, 'creator-team')).toBe('saved');
-      expect(names()).toEqual(['add:ballot_box_with_check']);
+      expect(names()).toEqual(['add:blue_check_mark']);
 
       // Clearing it goes back to the whole-PR view.
       reactions.calls.length = 0;
       expect(await service.setChannelTeam('C_PRIVATE', true, null)).toBe('saved');
-      expect(names()).toEqual(['remove:ballot_box_with_check']);
+      expect(names()).toEqual(['remove:blue_check_mark']);
       expect(store.channelTeam('C_PRIVATE')).toBeNull();
     });
 
@@ -398,8 +398,8 @@ describe('PrService', () => {
       expect(names()).toEqual([
         'add:1of2',
         'remove:1of2',
-        'add:ballot_box_with_check',
-        'remove:ballot_box_with_check',
+        'add:blue_check_mark',
+        'remove:blue_check_mark',
         'add:white_check_mark',
         'remove:white_check_mark',
         'add:merged',

@@ -17,7 +17,7 @@ const emoji: EmojiConfig = {
   changesRequested: 'request-changes',
   noReviews: 'please',
   partial: '1of2',
-  teamDone: 'ballot_box_with_check',
+  teamDone: 'blue_check_mark',
   approved: 'white_check_mark',
   merged: 'merged',
   closed: 'x',
@@ -88,7 +88,7 @@ describe('codeowner comment -> Slack reaction', () => {
     });
 
     it('tells the team that signed off it is done, and the one that has not to review', () => {
-      expect(reactionFor(body, 'messaging-pod')).toBe('ballot_box_with_check');
+      expect(reactionFor(body, 'messaging-pod')).toBe('blue_check_mark');
       expect(reactionFor(body, 'creator-team')).toBe('please');
     });
   });
@@ -136,7 +136,7 @@ describe('codeowner comment -> Slack reaction', () => {
     });
 
     it('credits the OR group’s other team, but not a team with its own rule pending', () => {
-      expect(reactionFor(body, 'creator-team')).toBe('ballot_box_with_check');
+      expect(reactionFor(body, 'creator-team')).toBe('blue_check_mark');
       expect(reactionFor(body, 'viewer-team')).toBe('please');
     });
   });

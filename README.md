@@ -13,7 +13,7 @@ a PR is ready to merge.
 | Waiting              | codeowner bot not satisfied, or hasn't commented       | `:please:` (custom)       | every channel                |
 | Changes requested    | any reviewer blocking (outranks everything but merged/closed) | `:request-changes:` | every channel              |
 | One of two reviews   | team's requirement met, bot reports "found 1 of 2"     | `:1of2:`                  | private channel set to a team |
-| Team done            | team's requirement and the minimum met, others pending | `:ballot_box_with_check:` | private channel set to a team |
+| Team done            | team's requirement and the minimum met, others pending | `:blue_check_mark:` | private channel set to a team |
 | Approved             | codeowner bot satisfied for the whole PR               | `:white_check_mark:`      | every channel                |
 | Merged               | PR merged                                              | `:merged:` (custom)       | every channel                |
 | Closed without merge | PR closed, not merged                                  | `:x:`                     | every channel                |

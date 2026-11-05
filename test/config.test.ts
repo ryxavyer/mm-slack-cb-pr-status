@@ -18,7 +18,7 @@ describe('loadConfig', () => {
       changesRequested: 'request-changes',
       noReviews: 'please',
       partial: '1of2',
-      teamDone: 'ballot_box_with_check',
+      teamDone: 'blue_check_mark',
       approved: 'white_check_mark',
       merged: 'merged',
       closed: 'x',

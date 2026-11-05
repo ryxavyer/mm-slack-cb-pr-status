@@ -268,7 +268,7 @@ describe('Reconciler', () => {
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());
-      expect(reactions.calls.map((c) => c.name)).toEqual(['ballot_box_with_check']);
+      expect(reactions.calls.map((c) => c.name)).toEqual(['blue_check_mark']);
     });
 
     it('asks another team still pending for its review', async () => {

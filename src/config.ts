@@ -52,7 +52,7 @@ const envSchema = z.object({
   EMOJI_CHANGES_REQUESTED: emojiName.default('request-changes'),
   EMOJI_NO_REVIEWS: emojiName.default('please'),
   EMOJI_PARTIAL: emojiName.default('1of2'),
-  EMOJI_TEAM_DONE: emojiName.default('ballot_box_with_check'),
+  EMOJI_TEAM_DONE: emojiName.default('blue_check_mark'),
   EMOJI_APPROVED: emojiName.default('white_check_mark'),
   EMOJI_MERGED: emojiName.default('merged'),
   EMOJI_CLOSED: emojiName.default('x'),
