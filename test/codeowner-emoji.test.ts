@@ -28,6 +28,8 @@ interface GitHubFacts {
   merged?: boolean;
   closed?: boolean;
   changesRequested?: number;
+  /** Whether anyone has reviewed yet. Defaults to true: most cases are mid-review. */
+  reviewed?: boolean;
 }
 
 function reactionFor(body: string | null, team: string | null = null, facts: GitHubFacts = {}): string | null {
@@ -42,6 +44,7 @@ function reactionFor(body: string | null, team: string | null = null, facts: Git
       closed: facts.closed ?? false,
       changesRequested: facts.changesRequested ?? 0,
       codeowners,
+      reviewed: facts.reviewed ?? true,
     }),
     lastPolledAt: null,
     createdAt: 0,
@@ -63,9 +66,14 @@ describe('codeowner comment -> Slack reaction', () => {
       '<details><summary>Show detailed file reviewers</summary></details>',
     ].join('\n');
 
-    it('asks for a reviewer, in any channel', () => {
-      expect(reactionFor(body)).toBe('please');
-      expect(reactionFor(body, 'media-library-experts')).toBe('please');
+    it('asks for a reviewer while nobody has reviewed, in any channel', () => {
+      expect(reactionFor(body, null, { reviewed: false })).toBe('please');
+      expect(reactionFor(body, 'media-library-experts', { reviewed: false })).toBe('please');
+    });
+
+    it('goes quiet once someone has reviewed, in any channel', () => {
+      expect(reactionFor(body)).toBeNull();
+      expect(reactionFor(body, 'media-library-experts')).toBeNull();
     });
 
     it('still defers to merged, closed and blocking states', () => {
@@ -84,12 +92,12 @@ describe('codeowner comment -> Slack reaction', () => {
     ].join('\n');
 
     it('holds a public channel back until every group has signed off', () => {
-      expect(reactionFor(body)).toBe('please');
+      expect(reactionFor(body)).toBeNull();
     });
 
-    it('tells the team that signed off it is done, and the one that has not to review', () => {
+    it('tells the team that signed off it is done', () => {
       expect(reactionFor(body, 'messaging-pod')).toBe('blue_check_mark');
-      expect(reactionFor(body, 'creator-team')).toBe('please');
+      expect(reactionFor(body, 'creator-team')).toBeNull();
     });
   });
 
@@ -132,12 +140,12 @@ describe('codeowner comment -> Slack reaction', () => {
     ].join('\n');
 
     it('still counts the outstanding AND rules in public', () => {
-      expect(reactionFor(body)).toBe('please');
+      expect(reactionFor(body)).toBeNull();
     });
 
     it('credits the OR group’s other team, but not a team with its own rule pending', () => {
       expect(reactionFor(body, 'creator-team')).toBe('blue_check_mark');
-      expect(reactionFor(body, 'viewer-team')).toBe('please');
+      expect(reactionFor(body, 'viewer-team')).toBeNull();
     });
   });
 
@@ -149,7 +157,7 @@ describe('codeowner comment -> Slack reaction', () => {
     ].join('\n');
 
     it('holds a public channel back until the minimum is met', () => {
-      expect(reactionFor(body)).toBe('please');
+      expect(reactionFor(body)).toBeNull();
     });
 
     it('shows one of two in the team’s own channel', () => {
@@ -159,13 +167,14 @@ describe('codeowner comment -> Slack reaction', () => {
 
   describe('a comment the parser does not recognise', () => {
     it('never approves', () => {
-      expect(reactionFor('LGTM!')).toBe('please');
-      expect(reactionFor('LGTM!', 'creator-team')).toBe('please');
+      expect(reactionFor('LGTM!')).toBeNull();
+      expect(reactionFor('LGTM!', 'creator-team')).toBeNull();
     });
 
     it('never approves when the bot has not commented', () => {
-      expect(reactionFor(NONE)).toBe('please');
-      expect(reactionFor(NONE, 'creator-team')).toBe('please');
+      expect(reactionFor(NONE)).toBeNull();
+      expect(reactionFor(NONE, 'creator-team')).toBeNull();
+      expect(reactionFor(NONE, null, { reviewed: false })).toBe('please');
     });
   });
 });

@@ -125,13 +125,14 @@ export class PrService {
     let codeownerStatus: string | null | undefined = undefined; // undefined = keep existing
 
     try {
-      const status = await this.github.fetchPrStatus(ref);
+      const status = await this.github.fetchPrStatus(ref, [this.config.codeownerBotLogin]);
       const codeowners = await this.github.fetchCodeownerStatus(ref, this.config.codeownerBotLogin);
       state = computeState({
         merged: status.merged,
         closed: status.closed,
         changesRequested: status.changesRequested,
         codeowners,
+        reviewed: status.reviewed,
       });
       codeownerStatus = codeowners ? JSON.stringify(codeowners) : null;
     } catch (error) {

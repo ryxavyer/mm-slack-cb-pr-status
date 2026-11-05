@@ -30,11 +30,17 @@ const PENDING: CodeownerStatus = {
 };
 
 describe('computeState', () => {
-  const base = { merged: false, closed: false, changesRequested: 0, codeowners: null };
+  const base = { merged: false, closed: false, changesRequested: 0, codeowners: null, reviewed: false };
 
-  it('reports no_reviews until the codeowner bot is satisfied', () => {
+  it('reports no_reviews until anyone has reviewed', () => {
     expect(computeState(base)).toBe('no_reviews');
     expect(computeState({ ...base, codeowners: PENDING })).toBe('no_reviews');
+  });
+
+  it('reports in_review once someone has, until the codeowner bot is satisfied', () => {
+    expect(computeState({ ...base, reviewed: true })).toBe('in_review');
+    expect(computeState({ ...base, reviewed: true, codeowners: PENDING })).toBe('in_review');
+    expect(computeState({ ...base, reviewed: true, codeowners: SATISFIED })).toBe('approved');
   });
 
   it('reports approved only on the codeowner bot’s say-so', () => {
@@ -86,6 +92,7 @@ describe('aggregateState', () => {
   it('is that PR’s own state when a message links just one', () => {
     const all = [
       'no_reviews',
+      'in_review',
       'changes_requested',
       'partial',
       'team_done',
@@ -101,6 +108,8 @@ describe('aggregateState', () => {
 
   it('reports the least settled state, so the message still asks for eyes', () => {
     expect(aggregateState(['approved', 'no_reviews'])).toBe('no_reviews');
+    expect(aggregateState(['in_review', 'no_reviews'])).toBe('no_reviews');
+    expect(aggregateState(['in_review', 'partial'])).toBe('in_review');
     expect(aggregateState(['merged', 'partial'])).toBe('partial');
     expect(aggregateState(['approved', 'partial'])).toBe('partial');
     expect(aggregateState(['team_done', 'partial'])).toBe('partial');
@@ -145,6 +154,7 @@ describe('aggregateState', () => {
 describe('emojiForState', () => {
   it('maps each state to its configured emoji', () => {
     expect(emojiForState('no_reviews', emoji)).toBe('please');
+    expect(emojiForState('in_review', emoji)).toBeNull();
     expect(emojiForState('changes_requested', emoji)).toBe('request-changes');
     expect(emojiForState('partial', emoji)).toBe('1of2');
     expect(emojiForState('team_done', emoji)).toBe('blue_check_mark');
@@ -182,25 +192,25 @@ describe('messageState', () => {
 
   it('is the PR’s own state without a team', () => {
     const pending = status([{ teams: ['creator-team'], satisfied: true }], null);
-    for (const state of ['no_reviews', 'approved', 'merged', 'changes_requested'] as const) {
+    for (const state of ['no_reviews', 'in_review', 'approved', 'merged', 'changes_requested'] as const) {
       expect(messageState(makePr(state, pending), null)).toBe(state);
     }
   });
 
-  it('passes every settled or blocking state through, even with a team', () => {
+  it('passes every state but in_review through, even with a team — unreviewed included', () => {
     const done = status([{ teams: ['creator-team'], satisfied: true }], null);
-    for (const state of ['approved', 'merged', 'closed', 'unknown', 'changes_requested'] as const) {
+    for (const state of ['no_reviews', 'approved', 'merged', 'closed', 'unknown', 'changes_requested'] as const) {
       expect(messageState(makePr(state, done), 'creator-team')).toBe(state);
     }
   });
 
-  it('shows nothing without a codeowner comment, even with a team', () => {
-    expect(messageState(makePr('no_reviews'), 'creator-team')).toBe('no_reviews');
+  it('shows no team progress without a codeowner comment', () => {
+    expect(messageState(makePr('in_review'), 'creator-team')).toBe('in_review');
   });
 
   it('reports team_done once the team is satisfied and the minimum is met', () => {
     const pr = makePr(
-      'no_reviews',
+      'in_review',
       status(
         [
           { teams: ['creator-team'], satisfied: true },
@@ -210,12 +220,12 @@ describe('messageState', () => {
       ),
     );
     expect(messageState(pr, 'creator-team')).toBe('team_done');
-    expect(messageState(pr, 'platform-team')).toBe('no_reviews');
+    expect(messageState(pr, 'platform-team')).toBe('in_review');
   });
 
   it('reports team_done for a satisfied team when the bot sets no minimum', () => {
     const pr = makePr(
-      'no_reviews',
+      'in_review',
       status(
         [
           { teams: ['creator-team'], satisfied: true },
@@ -229,14 +239,14 @@ describe('messageState', () => {
 
   it('reports partial only when the bot literally reports one of two reviews', () => {
     const reqs = [{ teams: ['creator-team'], satisfied: true }];
-    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 1, met: false })), 'creator-team')).toBe('partial');
-    expect(messageState(makePr('no_reviews', status(reqs, { required: 3, found: 1, met: false })), 'creator-team')).toBe('no_reviews');
-    expect(messageState(makePr('no_reviews', status(reqs, { required: 3, found: 2, met: false })), 'creator-team')).toBe('no_reviews');
+    expect(messageState(makePr('in_review', status(reqs, { required: 2, found: 1, met: false })), 'creator-team')).toBe('partial');
+    expect(messageState(makePr('in_review', status(reqs, { required: 3, found: 1, met: false })), 'creator-team')).toBe('in_review');
+    expect(messageState(makePr('in_review', status(reqs, { required: 3, found: 2, met: false })), 'creator-team')).toBe('in_review');
   });
 
   it('never shows progress while any requirement naming the team is unsatisfied', () => {
     const pr = makePr(
-      'no_reviews',
+      'in_review',
       status(
         [
           { teams: ['creator-team'], satisfied: false },
@@ -245,13 +255,13 @@ describe('messageState', () => {
         { required: 2, found: 2, met: true },
       ),
     );
-    expect(messageState(pr, 'creator-team')).toBe('no_reviews');
+    expect(messageState(pr, 'creator-team')).toBe('in_review');
   });
 
   it('credits a team for an OR requirement another team satisfied', () => {
     // The bot needs one of the two; once it's met, creator-team owes nothing.
     const pr = makePr(
-      'no_reviews',
+      'in_review',
       status(
         [
           { teams: ['design-system-stewards'], satisfied: false },
@@ -265,14 +275,14 @@ describe('messageState', () => {
 
   it('credits a team the bot does not name only through the minimum count', () => {
     const reqs = [{ teams: ['platform-team'], satisfied: false }];
-    expect(messageState(makePr('no_reviews', status(reqs, null)), 'creator-team')).toBe('no_reviews');
-    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 0, met: false })), 'creator-team')).toBe('no_reviews');
-    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 1, met: false })), 'creator-team')).toBe('partial');
-    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 2, met: true })), 'creator-team')).toBe('team_done');
+    expect(messageState(makePr('in_review', status(reqs, null)), 'creator-team')).toBe('in_review');
+    expect(messageState(makePr('in_review', status(reqs, { required: 2, found: 0, met: false })), 'creator-team')).toBe('in_review');
+    expect(messageState(makePr('in_review', status(reqs, { required: 2, found: 1, met: false })), 'creator-team')).toBe('partial');
+    expect(messageState(makePr('in_review', status(reqs, { required: 2, found: 2, met: true })), 'creator-team')).toBe('team_done');
   });
 
   it('matches team slugs case-insensitively', () => {
-    const pr = makePr('no_reviews', status([{ teams: ['Creator-Team'], satisfied: true }], null));
+    const pr = makePr('in_review', status([{ teams: ['Creator-Team'], satisfied: true }], null));
     expect(messageState(pr, 'creator-team')).toBe('team_done');
   });
 });

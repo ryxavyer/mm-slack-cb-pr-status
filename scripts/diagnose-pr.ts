@@ -14,7 +14,7 @@ import { Octokit } from 'octokit';
 import type { EmojiConfig } from '../src/config.js';
 import type { TrackedPr } from '../src/db/schema.js';
 import { parseCodeownerComment } from '../src/github/codeowner-comment.js';
-import { countChangesRequested, latestReviewByReviewer } from '../src/github/reviews.js';
+import { countChangesRequested, hasHumanReview, latestReviewByReviewer } from '../src/github/reviews.js';
 import { computeState, emojiForState, messageState } from '../src/state.js';
 
 const emoji: EmojiConfig = {
@@ -104,11 +104,13 @@ for (const [key, position] of positions) {
 if (positions.size === 0) console.log('  (none)');
 
 const changesRequested = countChangesRequested(reviews, requestedReviewers);
+const reviewed = hasHumanReview(reviews, pr.user, [botLogin]);
 const merged = Boolean(pr.merged ?? pr.merged_at);
 const closed = pr.state === 'closed';
 
-heading('change requests');
+heading('reviews that count');
 console.log(`  changesRequested=${changesRequested} (approvals are not counted; the codeowner bot decides)`);
+console.log(`  reviewed=${reviewed} (any review by someone other than the author, a bot or ${botLogin})`);
 
 heading(`codeowner comments (looking for a comment by "${botLogin}")`);
 const comments = await octokit.paginate(octokit.rest.issues.listComments, {
@@ -174,10 +176,10 @@ if (codeownerStatus === null) {
   console.log(`  ${codeownerStatus}`);
 }
 
-const state = computeState({ merged, closed, changesRequested, codeowners });
+const state = computeState({ merged, closed, changesRequested, codeowners, reviewed });
 // merged/closed outrank the review state, which would hide the very thing we
 // are diagnosing on a PR that has since been merged.
-const reviewState = computeState({ merged: false, closed: false, changesRequested, codeowners });
+const reviewState = computeState({ merged: false, closed: false, changesRequested, codeowners, reviewed });
 
 const tracked = {
   id: 0,

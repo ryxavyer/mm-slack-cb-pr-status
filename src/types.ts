@@ -3,13 +3,17 @@
  * GitHub stopped telling us anything about this PR (expired token, revoked
  * access, repo gone), so the last state we computed can no longer be trusted.
  *
+ * `no_reviews` is a PR nobody has reviewed yet; `in_review` is one somebody
+ * has, that the codeowner bot isn't satisfied with yet.
+ *
  * `partial` and `team_done` only ever describe a PR as seen from a private
  * channel set to a team; they are never stored on the PR itself. Everywhere
- * else a PR is either waiting, blocked, approved by the codeowner bot, or
- * finished.
+ * else a PR is either unreviewed, in review, blocked, approved by the codeowner
+ * bot, or finished.
  */
 export const PR_STATES = [
   'no_reviews',
+  'in_review',
   'changes_requested',
   'partial',
   'team_done',

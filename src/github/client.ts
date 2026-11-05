@@ -1,7 +1,7 @@
 import { Octokit } from 'octokit';
 import type { CodeownerStatus, PrRef } from '../types.js';
 import { parseCodeownerComment } from './codeowner-comment.js';
-import { countChangesRequested } from './reviews.js';
+import { countChangesRequested, hasHumanReview } from './reviews.js';
 
 /** What a poll needs to know about a PR. */
 export interface PrStatus {
@@ -9,6 +9,8 @@ export interface PrStatus {
   closed: boolean;
   /** Reviewers currently blocking the PR with a changes-requested review. */
   changesRequested: number;
+  /** Whether anyone other than the author or a bot has reviewed it at all. */
+  reviewed: boolean;
   title: string;
 }
 
@@ -39,7 +41,8 @@ export class PrUnreachableError extends Error {
 }
 
 export interface GitHubClient {
-  fetchPrStatus(ref: PrRef): Promise<PrStatus>;
+  /** `ignoreReviewers` are logins whose reviews don't count as someone having looked. */
+  fetchPrStatus(ref: PrRef, ignoreReviewers?: readonly string[]): Promise<PrStatus>;
   fetchCodeownerStatus(ref: PrRef, botLogin: string): Promise<CodeownerStatus | null>;
 }
 
@@ -145,7 +148,7 @@ export class OctokitGitHubClient implements GitHubClient {
    * paginated). An access failure surfaces as PrUnreachableError; anything else
    * (5xx, rate limiting, network) is rethrown as transient.
    */
-  async fetchPrStatus(ref: PrRef): Promise<PrStatus> {
+  async fetchPrStatus(ref: PrRef, ignoreReviewers: readonly string[] = []): Promise<PrStatus> {
     const { owner, repo, number } = ref;
 
     try {
@@ -168,6 +171,7 @@ export class OctokitGitHubClient implements GitHubClient {
         // `requested_reviewers` is what makes a re-requested review read as
         // pending again rather than blocking forever. See countChangesRequested.
         changesRequested: countChangesRequested(reviews, pr.requested_reviewers ?? []),
+        reviewed: hasHumanReview(reviews, pr.user, ignoreReviewers),
         title: pr.title ?? '',
       };
     } catch (error) {

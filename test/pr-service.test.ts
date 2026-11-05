@@ -69,9 +69,12 @@ describe('PrService', () => {
     service = new PrService(store, github, reconciler, config, testLogger);
   };
 
-  /** Puts a PR at a review stage, optionally with other GitHub facts. */
+  /**
+   * Puts a PR at a review stage, optionally with other GitHub facts. Every stage
+   * past `waiting` has had a review.
+   */
   const stage = (pr: PrRef, name: keyof typeof STAGES | null, status: Partial<PrStatus> = {}) => {
-    github.set(pr, status);
+    github.set(pr, { reviewed: name !== null && name !== 'waiting', ...status });
     github.setCodeownerStatus(pr, name === null ? null : STAGES[name]);
   };
 
@@ -108,13 +111,21 @@ describe('PrService', () => {
       expect(reactions.calls).toEqual([]);
     });
 
-    it('shows the no-reviews emoji while waiting, in every channel', async () => {
+    it('shows the no-reviews emoji only until the first review, in every channel', async () => {
       build({ emoji: testConfig().emoji });
       stage(ref, 'waiting');
       await service.trackLinks(PUBLIC, '111.1', [ref]);
       await service.trackLinks(TEAM, '222.2', [ref]);
 
       expect(names()).toEqual(['add:please', 'add:please']);
+
+      // The first review lands: :please: goes, and only the team channel has
+      // anything to say about the stage in between.
+      reactions.calls.length = 0;
+      stage(ref, 'oneOfTwo');
+      await service.runCycle();
+      expect(store.messageReaction(PUBLIC, '111.1')).toBeNull();
+      expect(store.messageReaction(TEAM, '222.2')).toBe('1of2');
 
       stage(ref, 'approved');
       await service.runCycle();
@@ -374,7 +385,7 @@ describe('PrService', () => {
       stage(ref, 'oneOfTwo');
       const summary = await service.runCycle();
 
-      expect(store.findPr(ref)?.state).toBe('no_reviews');
+      expect(store.findPr(ref)?.state).toBe('in_review');
       expect(summary.changed).toBe(1);
       expect(names()).toEqual(['add:1of2']);
     });

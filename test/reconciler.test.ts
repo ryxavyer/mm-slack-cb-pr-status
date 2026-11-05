@@ -249,7 +249,7 @@ describe('Reconciler', () => {
     /** creator-team has done its part; platform-team and the PR as a whole have not. */
     const teamDone = (): TrackedPr => {
       const updated = store.recordPoll(pr.id, {
-        state: 'no_reviews',
+        state: 'in_review',
         codeownerStatus: JSON.stringify({
           requirements: [
             { teams: ['creator-team'], satisfied: true },
@@ -271,12 +271,13 @@ describe('Reconciler', () => {
       expect(reactions.calls.map((c) => c.name)).toEqual(['blue_check_mark']);
     });
 
-    it('asks another team still pending for its review', async () => {
+    it('shows nothing for another team still pending once review is under way', async () => {
       store.setChannelTeam('C1', true, 'platform-team');
       store.linkMessage(pr.id, 'C1', '111.1');
 
-      await reconciler.reconcilePr(teamDone());
-      expect(reactions.calls.map((c) => c.name)).toEqual(['please']);
+      const summary = await reconciler.reconcilePr(teamDone());
+      expect(reactions.calls).toEqual([]);
+      expect(summary.unchanged).toBe(1);
     });
 
     it('ignores the team in a public channel', async () => {
@@ -284,7 +285,7 @@ describe('Reconciler', () => {
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());
-      expect(reactions.calls.map((c) => c.name)).toEqual(['please']);
+      expect(reactions.calls).toEqual([]);
     });
   });
 });

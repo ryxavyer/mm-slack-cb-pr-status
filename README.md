@@ -10,7 +10,8 @@ a PR is ready to merge.
 
 | State                | Condition                                              | Reaction                  | Where                        |
 | -------------------- | ------------------------------------------------------ | ------------------------- | ---------------------------- |
-| Waiting              | codeowner bot not satisfied, or hasn't commented       | `:please:` (custom)       | every channel                |
+| No reviews yet       | nobody but the author or a bot has reviewed            | `:please:` (custom)       | every channel                |
+| In review            | reviewed, but the codeowner bot isn't satisfied yet    | *(none)*                  | every channel                |
 | Changes requested    | any reviewer blocking (outranks everything but merged/closed) | `:request-changes:` | every channel              |
 | One of two reviews   | team's requirement met, bot reports "found 1 of 2"     | `:1of2:`                  | private channel set to a team |
 | Team done            | team's requirement and the minimum met, others pending | `:blue_check_mark:` | private channel set to a team |

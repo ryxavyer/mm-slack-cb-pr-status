@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   countChangesRequested,
+  hasHumanReview,
   latestReviewByReviewer,
   type ReviewLike,
 } from '../src/github/reviews.js';
@@ -170,5 +171,37 @@ describe('re-requested reviews', () => {
     ];
 
     expect(countChangesRequested(reviews, [])).toBe(1);
+  });
+});
+
+describe('hasHumanReview', () => {
+  const author = { id: 100, login: 'author' };
+
+  it('is false with no reviews, or only pending ones', () => {
+    expect(hasHumanReview([], author)).toBe(false);
+    expect(hasHumanReview([{ user: { id: 1 }, state: 'PENDING', submitted_at: null }], author)).toBe(false);
+  });
+
+  it('counts any submitted review, whatever its verdict', () => {
+    for (const state of ['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED']) {
+      expect(hasHumanReview([review(1, state, '2026-08-01T10:00:00Z')], author), state).toBe(true);
+    }
+  });
+
+  it('ignores the author’s own reviews', () => {
+    expect(hasHumanReview([review(100, 'COMMENTED', '2026-08-01T10:00:00Z')], author)).toBe(false);
+  });
+
+  it('ignores bot accounts and the ignored logins, case-insensitively', () => {
+    const bot = { user: { id: 7, login: 'copilot', type: 'Bot' }, state: 'COMMENTED', submitted_at: null };
+    const codeownerBot = { user: { id: 8, login: 'MMLLC-GH' }, state: 'APPROVED', submitted_at: null };
+
+    expect(hasHumanReview([bot, codeownerBot], author, ['mmllc-gh'])).toBe(false);
+    expect(hasHumanReview([codeownerBot], author)).toBe(true);
+  });
+
+  it('still counts a reviewer who has since been asked to look again', () => {
+    // Someone has looked; a re-request only changes whether they block.
+    expect(hasHumanReview([review(1, 'CHANGES_REQUESTED', '2026-08-01T10:00:00Z')], author)).toBe(true);
   });
 });

@@ -7,6 +7,8 @@
 export interface ReviewerRef {
   id?: number | null;
   login?: string | null;
+  /** GitHub's account type: 'User', or 'Bot' for apps. */
+  type?: string | null;
 }
 
 export interface ReviewLike {
@@ -92,4 +94,33 @@ export function countChangesRequested(
     if (state === 'CHANGES_REQUESTED') blocking += 1;
   }
   return blocking;
+}
+
+/** Review states that mean someone submitted a review, whatever its verdict. */
+const SUBMITTED_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED']);
+
+/**
+ * Whether anyone has reviewed the PR at all — the line between "needs a first
+ * reviewer" and "in review". Any submitted review counts, including a
+ * comment-only one, one later dismissed and one since re-requested: each means
+ * someone has looked. The PR's author, bot accounts and the logins in `ignore`
+ * (the codeowner bot) don't count.
+ */
+export function hasHumanReview(
+  reviews: readonly ReviewLike[],
+  author: ReviewerRef | null | undefined,
+  ignore: readonly string[] = [],
+): boolean {
+  const authorKey = reviewerKey(author);
+  const ignored = new Set(ignore.map((login) => login.toLowerCase()));
+
+  return reviews.some((review) => {
+    const state = review.state?.toUpperCase();
+    if (!state || !SUBMITTED_STATES.has(state)) return false;
+    const user = review.user;
+    if (!user || user.type === 'Bot') return false;
+    if (user.login && ignored.has(user.login.toLowerCase())) return false;
+    const key = reviewerKey(user);
+    return key !== null && key !== authorKey;
+  });
 }

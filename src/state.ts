@@ -9,6 +9,8 @@ export interface StateInput {
   changesRequested: number;
   /** The codeowner bot's latest verdict, or null when it hasn't commented. */
   codeowners: CodeownerStatus | null;
+  /** Whether anyone (other than the author or a bot) has reviewed the PR at all. */
+  reviewed: boolean;
 }
 
 /**
@@ -20,13 +22,21 @@ export interface StateInput {
  * - Approval is the codeowner bot's call alone. We never count approvals
  *   ourselves: we can't tell which team an approval came from, or how many a
  *   PR needs. No comment from the bot means no approval.
+ * - Short of that, the only thing reviews decide is whether anyone has looked
+ *   yet: `no_reviews` asks for a first reviewer, `in_review` is in between.
  */
-export function computeState({ merged, closed, changesRequested, codeowners }: StateInput): PrState {
+export function computeState({
+  merged,
+  closed,
+  changesRequested,
+  codeowners,
+  reviewed,
+}: StateInput): PrState {
   if (merged) return 'merged';
   if (closed) return 'closed';
   if (changesRequested > 0) return 'changes_requested';
   if (codeowners?.allSatisfied) return 'approved';
-  return 'no_reviews';
+  return reviewed ? 'in_review' : 'no_reviews';
 }
 
 /**
@@ -34,9 +44,10 @@ export function computeState({ merged, closed, changesRequested, codeowners }: S
  * channel it was posted in (null everywhere else).
  *
  * Without a team this is just the PR's own state, so public channels only ever
- * see "waiting", "blocked", "approved by the codeowner bot" or "finished".
+ * see "unreviewed", "in review", "blocked", "approved by the codeowner bot" or
+ * "finished".
  *
- * With a team, a PR still waiting on the whole can show progress for that team:
+ * With a team, a PR in review can show progress for that team:
  *   - `team_done` when every requirement naming the team is satisfied and the
  *     bot's minimum review count is met — the bot needs nothing more from the
  *     team, though other code owners are still pending.
@@ -48,7 +59,7 @@ export function computeState({ merged, closed, changesRequested, codeowners }: S
  * reviewed it.
  */
 export function messageState(pr: TrackedPr, team: string | null): PrState {
-  if (pr.state !== 'no_reviews' || team === null || !pr.codeownerStatus) return pr.state;
+  if (pr.state !== 'in_review' || team === null || !pr.codeownerStatus) return pr.state;
 
   let status: CodeownerStatus;
   try {
@@ -59,13 +70,13 @@ export function messageState(pr: TrackedPr, team: string | null): PrState {
 
   const slug = team.toLowerCase();
   const teamReqs = status.requirements.filter((r) => r.teams.some((t) => t.toLowerCase() === slug));
-  if (!teamReqs.every((r) => r.satisfied)) return 'no_reviews';
+  if (!teamReqs.every((r) => r.satisfied)) return 'in_review';
 
   const { minimum } = status;
-  if (minimum === null) return teamReqs.length > 0 ? 'team_done' : 'no_reviews';
+  if (minimum === null) return teamReqs.length > 0 ? 'team_done' : 'in_review';
   if (minimum.met) return 'team_done';
   if (minimum.required === 2 && minimum.found === 1) return 'partial';
-  return 'no_reviews';
+  return 'in_review';
 }
 
 /**
@@ -95,6 +106,7 @@ const AGGREGATE_PRECEDENCE: readonly PrState[] = [
   'unknown',
   'changes_requested',
   'no_reviews',
+  'in_review',
   'partial',
   'team_done',
   'approved',
@@ -123,6 +135,10 @@ export function emojiForState(state: PrState, emoji: EmojiConfig): string | null
   switch (state) {
     case 'no_reviews':
       return emoji.noReviews;
+    case 'in_review':
+      // Deliberately silent: somebody has looked, and only the codeowner bot
+      // can say the PR is done.
+      return null;
     case 'changes_requested':
       return emoji.changesRequested;
     case 'partial':

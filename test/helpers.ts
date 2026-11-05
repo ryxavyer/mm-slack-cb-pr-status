@@ -105,6 +105,7 @@ export class FakeGitHubClient implements GitHubClient {
       merged: false,
       closed: false,
       changesRequested: 0,
+      reviewed: false,
       title: 'test pr',
       ...status,
     });
