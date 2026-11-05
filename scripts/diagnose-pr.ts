@@ -6,22 +6,22 @@
  *
  *   GITHUB_TOKEN=ghp_... npx tsx scripts/diagnose-pr.ts <pr-url>
  *
- * Reads GITHUB_TOKEN, and optionally REQUIRED_APPROVALS (default 2) and
- * TEAM_MAP_FILE (default ./team-map.json). Read-only — it never touches Slack
- * or the database.
+ * Reads GITHUB_TOKEN, and optionally CODEOWNER_BOT_LOGIN (default mmllc-gh) and
+ * TEAM, a GitHub team slug, to also show what a private channel set to that team
+ * would see. Read-only — it never touches Slack or the database.
  */
-import { readFileSync } from 'node:fs';
 import { Octokit } from 'octokit';
 import type { EmojiConfig } from '../src/config.js';
 import type { TrackedPr } from '../src/db/schema.js';
 import { parseCodeownerComment } from '../src/github/codeowner-comment.js';
-import { latestReviewByReviewer, summariseReviews } from '../src/github/reviews.js';
-import { computeCodeownerState, computeState, emojiForState } from '../src/state.js';
+import { countChangesRequested, latestReviewByReviewer } from '../src/github/reviews.js';
+import { computeState, emojiForState, messageState } from '../src/state.js';
 
 const emoji: EmojiConfig = {
   changesRequested: process.env['EMOJI_CHANGES_REQUESTED'] ?? 'request-changes',
   noReviews: process.env['EMOJI_NO_REVIEWS'] ?? 'please',
   partial: process.env['EMOJI_PARTIAL'] ?? '1of2',
+  teamDone: process.env['EMOJI_TEAM_DONE'] ?? 'ballot_box_with_check',
   approved: process.env['EMOJI_APPROVED'] ?? 'white_check_mark',
   merged: process.env['EMOJI_MERGED'] ?? 'merged',
   closed: process.env['EMOJI_CLOSED'] ?? 'x',
@@ -48,15 +48,8 @@ if (!token) {
   process.exit(1);
 }
 
-const requiredApprovals = Number(process.env['REQUIRED_APPROVALS'] ?? 2);
-const teamMapFile = process.env['TEAM_MAP_FILE'] ?? 'team-map.json';
-
-let botLogin = 'mmllc-gh';
-try {
-  botLogin = JSON.parse(readFileSync(teamMapFile, 'utf-8')).botLogin ?? botLogin;
-} catch {
-  console.log(`! could not read ${teamMapFile}; assuming botLogin=${botLogin}`);
-}
+const botLogin = process.env['CODEOWNER_BOT_LOGIN'] ?? 'mmllc-gh';
+const team = process.env['TEAM']?.toLowerCase() || null;
 
 const octokit = new Octokit({
   auth: token,
@@ -110,35 +103,12 @@ for (const [key, position] of positions) {
 }
 if (positions.size === 0) console.log('  (none)');
 
-const summary = summariseReviews(reviews, requestedReviewers);
+const changesRequested = countChangesRequested(reviews, requestedReviewers);
 const merged = Boolean(pr.merged ?? pr.merged_at);
 const closed = pr.state === 'closed';
-const state = computeState({
-  merged,
-  closed,
-  approvals: summary.approvals,
-  changesRequested: summary.changesRequested,
-  requiredApprovals,
-});
 
-// merged/closed outrank the review state, which would hide the very thing we
-// are diagnosing on a PR that has since been merged.
-const reviewState = computeState({
-  merged: false,
-  closed: false,
-  approvals: summary.approvals,
-  changesRequested: summary.changesRequested,
-  requiredApprovals,
-});
-
-heading('approval count');
-console.log(
-  `  approvals=${summary.approvals} changesRequested=${summary.changesRequested} requiredApprovals=${requiredApprovals}`,
-);
-console.log(`  -> computeState = ${state}`);
-if (merged || closed) {
-  console.log(`  -> ignoring merged/closed, the review state is ${reviewState}`);
-}
+heading('change requests');
+console.log(`  changesRequested=${changesRequested} (approvals are not counted; the codeowner bot decides)`);
 
 heading(`codeowner comments (looking for a comment by "${botLogin}")`);
 const comments = await octokit.paginate(octokit.rest.issues.listComments, {
@@ -159,8 +129,8 @@ for (const c of comments) {
 }
 
 // The exact body of every comment by the bot. This is the datum that matters:
-// the parser recognises the "all satisfied" case only by an exact match on the
-// whole body, so any extra punctuation, markdown or emoji makes it return null.
+// a comment the parser can't read leaves the app with no codeowner status, and
+// so with no approval.
 const botComments = comments.filter(
   (c) => c.user?.login?.toLowerCase() === botLogin.toLowerCase(),
 );
@@ -177,17 +147,18 @@ for (const c of botComments) {
 }
 
 // Exactly what the app does: newest first, first comment by botLogin that parses.
-let codeownerStatus: string | null = null;
+let codeowners: ReturnType<typeof parseCodeownerComment> = null;
 let usedComment: string | undefined;
 for (const c of [...comments].reverse()) {
   if (c.user?.login?.toLowerCase() !== botLogin.toLowerCase()) continue;
   const parsed = parseCodeownerComment(c.body ?? '');
   if (parsed !== null) {
-    codeownerStatus = JSON.stringify(parsed);
+    codeowners = parsed;
     usedComment = c.created_at;
     break;
   }
 }
+const codeownerStatus = codeowners === null ? null : JSON.stringify(codeowners);
 
 if (usedComment && botComments.length > 0 && usedComment !== botComments.at(-1)?.created_at) {
   console.log(
@@ -198,19 +169,22 @@ if (usedComment && botComments.length > 0 && usedComment !== botComments.at(-1)?
 heading('codeowner status the app would store');
 if (codeownerStatus === null) {
   console.log('  null  - no comment by that login parsed as a codeowner status');
-  console.log('  (the emoji then comes from the approval count alone)');
+  console.log('  (the PR can then never show as approved)');
 } else {
   console.log(`  ${codeownerStatus}`);
 }
+
+const state = computeState({ merged, closed, changesRequested, codeowners });
+// merged/closed outrank the review state, which would hide the very thing we
+// are diagnosing on a PR that has since been merged.
+const reviewState = computeState({ merged: false, closed: false, changesRequested, codeowners });
 
 const tracked = {
   id: 0,
   owner,
   repo,
   number,
-  state,
-  approvals: summary.approvals,
-  requiredApprovals,
+  state: reviewState,
   lastPolledAt: null,
   createdAt: 0,
   closedAt: null,
@@ -219,14 +193,15 @@ const tracked = {
 } satisfies TrackedPr;
 
 heading('resulting emoji');
+console.log(`  -> computeState = ${state}`);
 if (merged || closed) {
   console.log(`  (this PR is ${merged ? 'merged' : 'closed'}, which outranks everything below;`);
   console.log('   the states shown use the review state so the derivation stays visible)');
 }
-const forEmoji = { ...tracked, state: reviewState } satisfies TrackedPr;
-const final = computeCodeownerState(forEmoji);
-console.log(`  ${final.padEnd(20)} ${emojiForState(final, emoji) ?? '(no reaction)'}`);
-if (final !== reviewState) {
-  console.log(`  (held back from ${reviewState} by an outstanding review group)`);
+const views: [string, string | null][] = [['public channel', null]];
+if (team) views.push([`private channel set to ${team}`, team]);
+for (const [label, slug] of views) {
+  const shown = messageState(tracked, slug);
+  console.log(`  ${label.padEnd(36)} ${shown.padEnd(18)} ${emojiForState(shown, emoji) ?? '(no reaction)'}`);
 }
 console.log();

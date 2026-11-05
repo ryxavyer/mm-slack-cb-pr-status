@@ -1,5 +1,5 @@
 /**
- * Approval counting, isolated from any HTTP concern so it can be unit tested
+ * Review tallying, isolated from any HTTP concern so it can be unit tested
  * against fixtures.
  */
 
@@ -63,51 +63,33 @@ export function latestReviewByReviewer(reviews: readonly ReviewLike[]): Map<stri
   return new Map([...latest].map(([key, value]) => [key, value.state]));
 }
 
-export interface ReviewSummary {
-  /** Reviewers whose current position is "approved". */
-  approvals: number;
-  /** Reviewers currently blocking the PR with a changes-requested review. */
-  changesRequested: number;
-}
-
 /**
- * Tallies the reviewers currently for and against the PR.
+ * Reviewers currently blocking the PR with a changes-requested review. Approval
+ * is not tallied: it is the codeowner bot's call, not a count.
  *
  * `requestedReviewers` is the PR's live review-request list. A reviewer on it
  * has had their review re-requested, which GitHub does not record on the review
- * itself — the old review keeps its `CHANGES_REQUESTED` (or `APPROVED`) state
- * forever. Left alone, a reviewer who requested changes would block the PR for
- * good, however many times the author pushed a fix and asked them to look again.
- *
- * So a re-requested reviewer has no current position: GitHub moves them back to
- * "awaiting review", and so do we. That cuts both ways — re-requesting from
- * someone who had approved drops their approval too, because their sign-off was
- * for a version of the PR the author has since replaced.
+ * itself — the old review keeps its `CHANGES_REQUESTED` state forever. Left
+ * alone, a reviewer who requested changes would block the PR for good, however
+ * many times the author pushed a fix and asked them to look again. So a
+ * re-requested reviewer has no current position: GitHub moves them back to
+ * "awaiting review", and so do we.
  *
  * A review that was formally *dismissed* needs none of this: GitHub rewrites the
- * review's own state to `DISMISSED`, which already counts for neither side.
+ * review's own state to `DISMISSED`, which does not block.
  */
-export function summariseReviews(
+export function countChangesRequested(
   reviews: readonly ReviewLike[],
   requestedReviewers: readonly ReviewerRef[] = [],
-): ReviewSummary {
+): number {
   const reRequested = new Set(
     requestedReviewers.map((user) => reviewerKey(user)).filter((key): key is string => key !== null),
   );
 
-  const summary: ReviewSummary = { approvals: 0, changesRequested: 0 };
+  let blocking = 0;
   for (const [key, state] of latestReviewByReviewer(reviews)) {
     if (reRequested.has(key)) continue;
-    if (state === 'APPROVED') summary.approvals += 1;
-    else if (state === 'CHANGES_REQUESTED') summary.changesRequested += 1;
+    if (state === 'CHANGES_REQUESTED') blocking += 1;
   }
-  return summary;
-}
-
-/** Number of reviewers whose current position is "approved". */
-export function countApprovals(
-  reviews: readonly ReviewLike[],
-  requestedReviewers: readonly ReviewerRef[] = [],
-): number {
-  return summariseReviews(reviews, requestedReviewers).approvals;
+  return blocking;
 }

@@ -367,3 +367,22 @@ Show detailed file reviewers`;
     expect(result!.requirements).toHaveLength(1);
   });
 });
+
+describe('parseCodeownerComment with nothing but a minimum', () => {
+  it('never reads a header with nothing parseable under it as satisfied', () => {
+    const result = parseCodeownerComment('Codeowners approval required for this PR:\n\nSomething new');
+    expect(result).toEqual({ requirements: [], minimum: null, allSatisfied: false });
+  });
+
+  it('parses a minimum-only comment for a PR that touches no owned files', () => {
+    const body = `Codeowners approval required for this PR:
+
+Minimum review requirement not met. Need 2 reviews, found 1.`;
+
+    expect(parseCodeownerComment(body)).toEqual({
+      requirements: [],
+      minimum: { required: 2, found: 1, met: false },
+      allSatisfied: false,
+    });
+  });
+});

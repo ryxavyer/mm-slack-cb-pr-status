@@ -20,20 +20,21 @@ describe('Store', () => {
   });
 
   it('creates a PR once and returns the same row afterwards', () => {
-    const first = store.upsertPr(ref, 2);
-    const second = store.upsertPr(ref, 2);
+    const first = store.upsertPr(ref);
+    const second = store.upsertPr(ref);
     expect(second.id).toBe(first.id);
     expect(first.state).toBe('no_reviews');
     expect(store.counts().prs).toBe(1);
   });
 
-  it('refreshes requiredApprovals on re-upsert so config changes take effect', () => {
-    store.upsertPr(ref, 2);
-    expect(store.upsertPr(ref, 3).requiredApprovals).toBe(3);
+  it('keeps a known PR’s state on re-upsert', () => {
+    const pr = store.upsertPr(ref);
+    store.recordPoll(pr.id, { state: 'approved' });
+    expect(store.upsertPr(ref).state).toBe('approved');
   });
 
   it('links many messages to one PR without duplicating rows', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     const a = store.linkMessage(pr.id, 'C1', '111.1');
     const b = store.linkMessage(pr.id, 'C1', '222.2');
     const again = store.linkMessage(pr.id, 'C1', '111.1');
@@ -44,35 +45,35 @@ describe('Store', () => {
   });
 
   it('treats the same timestamp in different channels as different messages', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     store.linkMessage(pr.id, 'C1', '111.1');
     store.linkMessage(pr.id, 'C2', '111.1');
     expect(store.messagesForPr(pr.id)).toHaveLength(2);
   });
 
   it('lists only non-terminal PRs as active', () => {
-    const open = store.upsertPr(ref, 2);
-    const done = store.upsertPr(other, 2);
+    const open = store.upsertPr(ref);
+    const done = store.upsertPr(other);
     store.linkMessage(open.id, 'C1', '111.1');
     store.linkMessage(done.id, 'C1', '222.2');
-    store.recordPoll(done.id, { state: 'merged', approvals: 2, requiredApprovals: 2 });
+    store.recordPoll(done.id, { state: 'merged' });
 
     const active = store.listActivePrs();
     expect(active.map((p) => p.id)).toEqual([open.id]);
   });
 
   it('stamps closedAt when a PR first goes terminal and keeps it stable', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     const merged = store.recordPoll(
       pr.id,
-      { state: 'merged', approvals: 2, requiredApprovals: 2 },
+      { state: 'merged' },
       1_000,
     );
     expect(merged?.closedAt).toBe(1_000);
 
     const again = store.recordPoll(
       pr.id,
-      { state: 'merged', approvals: 2, requiredApprovals: 2 },
+      { state: 'merged' },
       9_000,
     );
     expect(again?.closedAt).toBe(1_000);
@@ -80,12 +81,12 @@ describe('Store', () => {
   });
 
   it('clears closedAt if a PR is reopened', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     store.linkMessage(pr.id, 'C1', '111.1');
-    store.recordPoll(pr.id, { state: 'closed', approvals: 0, requiredApprovals: 2 }, 1_000);
+    store.recordPoll(pr.id, { state: 'closed' }, 1_000);
     const reopened = store.recordPoll(
       pr.id,
-      { state: 'no_reviews', approvals: 0, requiredApprovals: 2 },
+      { state: 'no_reviews' },
       2_000,
     );
     expect(reopened?.closedAt).toBeNull();
@@ -93,7 +94,7 @@ describe('Store', () => {
   });
 
   it('tracks the reaction currently on a message', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     const message = store.linkMessage(pr.id, 'C1', '111.1');
     expect(message.currentReaction).toBeNull();
     expect(store.messageReaction('C1', '111.1')).toBeNull();
@@ -106,8 +107,8 @@ describe('Store', () => {
   });
 
   it('keeps the reaction consistent across every PR linked in a message', () => {
-    const a = store.upsertPr(ref, 2);
-    const b = store.upsertPr(other, 2);
+    const a = store.upsertPr(ref);
+    const b = store.upsertPr(other);
     store.linkMessage(a.id, 'C1', '111.1');
     store.linkMessage(b.id, 'C1', '111.1');
 
@@ -118,20 +119,20 @@ describe('Store', () => {
   });
 
   it('reports an existing reaction even when a newly linked PR row is still null', () => {
-    const a = store.upsertPr(ref, 2);
+    const a = store.upsertPr(ref);
     store.linkMessage(a.id, 'C1', '111.1');
     store.setMessageReaction('C1', '111.1', 'white_check_mark');
 
     // A second PR link posted onto the same message starts with a null row.
-    const b = store.upsertPr(other, 2);
+    const b = store.upsertPr(other);
     store.linkMessage(b.id, 'C1', '111.1');
 
     expect(store.messageReaction('C1', '111.1')).toBe('white_check_mark');
   });
 
   it('lists every PR linked in a message', () => {
-    const a = store.upsertPr(ref, 2);
-    const b = store.upsertPr(other, 2);
+    const a = store.upsertPr(ref);
+    const b = store.upsertPr(other);
     store.linkMessage(a.id, 'C1', '111.1');
     store.linkMessage(b.id, 'C1', '111.1');
     store.linkMessage(b.id, 'C1', '222.2');
@@ -142,8 +143,8 @@ describe('Store', () => {
   });
 
   it('deletes every link carried by one deleted Slack message', () => {
-    const a = store.upsertPr(ref, 2);
-    const b = store.upsertPr(other, 2);
+    const a = store.upsertPr(ref);
+    const b = store.upsertPr(other);
     store.linkMessage(a.id, 'C1', '111.1');
     store.linkMessage(b.id, 'C1', '111.1');
     store.linkMessage(b.id, 'C1', '222.2');
@@ -154,12 +155,12 @@ describe('Store', () => {
   });
 
   it('expires PRs closed before the cutoff, along with their messages', () => {
-    const stale = store.upsertPr(ref, 2);
-    const recent = store.upsertPr(other, 2);
+    const stale = store.upsertPr(ref);
+    const recent = store.upsertPr(other);
     store.linkMessage(stale.id, 'C1', '111.1');
     store.linkMessage(recent.id, 'C1', '222.2');
-    store.recordPoll(stale.id, { state: 'merged', approvals: 2, requiredApprovals: 2 }, 1_000);
-    store.recordPoll(recent.id, { state: 'merged', approvals: 2, requiredApprovals: 2 }, 9_000);
+    store.recordPoll(stale.id, { state: 'merged' }, 1_000);
+    store.recordPoll(recent.id, { state: 'merged' }, 9_000);
 
     expect(store.deleteClosedBefore(5_000)).toBe(1);
     expect(store.getPr(stale.id)).toBeUndefined();
@@ -168,15 +169,15 @@ describe('Store', () => {
   });
 
   it('never expires a PR that is still open', () => {
-    const pr = store.upsertPr(ref, 2);
-    store.recordPoll(pr.id, { state: 'approved', approvals: 2, requiredApprovals: 2 });
+    const pr = store.upsertPr(ref);
+    store.recordPoll(pr.id, { state: 'approved' });
     expect(store.deleteClosedBefore(Date.now() + 1_000_000)).toBe(0);
     expect(store.getPr(pr.id)).toBeDefined();
   });
 
   it('excludes PRs with no linked messages from listActivePrs', () => {
-    const linked = store.upsertPr(ref, 2);
-    const orphan = store.upsertPr(other, 2);
+    const linked = store.upsertPr(ref);
+    const orphan = store.upsertPr(other);
     store.linkMessage(linked.id, 'C1', '111.1');
     // orphan has no messages
 
@@ -184,8 +185,8 @@ describe('Store', () => {
   });
 
   it('deleteOrphanedPrs removes PRs with no message links', () => {
-    const linked = store.upsertPr(ref, 2);
-    const orphan = store.upsertPr(other, 2);
+    const linked = store.upsertPr(ref);
+    const orphan = store.upsertPr(other);
     store.linkMessage(linked.id, 'C1', '111.1');
 
     expect(store.deleteOrphanedPrs()).toBe(1);
@@ -194,7 +195,7 @@ describe('Store', () => {
   });
 
   it('deleteOrphanedPrs leaves PRs alone once all messages are deleted', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     store.linkMessage(pr.id, 'C1', '111.1');
     store.deleteMessagesByTs('C1', '111.1');
 
@@ -203,29 +204,47 @@ describe('Store', () => {
   });
 
   it('finds a PR by its reference', () => {
-    const pr = store.upsertPr(ref, 2);
+    const pr = store.upsertPr(ref);
     expect(store.findPr(ref)?.id).toBe(pr.id);
     expect(store.findPr(other)).toBeUndefined();
   });
 
-  describe('channel privacy', () => {
-    it('is undefined for a channel we have never seen a message in', () => {
-      expect(store.isChannelPrivate('C_UNSEEN')).toBeUndefined();
+  describe('channel settings', () => {
+    it('has no team for a channel it has never seen', () => {
+      expect(store.channelTeam('C1')).toBeNull();
     });
 
-    it('records and reads back both kinds of channel', () => {
-      store.setChannelPrivacy('C_PUBLIC', false);
-      store.setChannelPrivacy('C_PRIVATE', true);
+    it('honours a team only while the channel is private', () => {
+      store.setChannelTeam('C1', true, 'creator-team');
+      expect(store.channelTeam('C1')).toBe('creator-team');
 
-      expect(store.isChannelPrivate('C_PUBLIC')).toBe(false);
-      expect(store.isChannelPrivate('C_PRIVATE')).toBe(true);
-    });
-
-    it('updates a channel that changed privacy', () => {
+      // Converted to public: the setting stays on file but stops applying.
       store.setChannelPrivacy('C1', false);
+      expect(store.channelTeam('C1')).toBeNull();
+
       store.setChannelPrivacy('C1', true);
-      expect(store.isChannelPrivate('C1')).toBe(true);
+      expect(store.channelTeam('C1')).toBe('creator-team');
+    });
+
+    it('keeps the team when the channel type is recorded again, and clears it on request', () => {
+      store.setChannelPrivacy('C1', true);
+      store.setChannelTeam('C1', true, 'creator-team');
+      store.setChannelPrivacy('C1', true);
+      expect(store.channelTeam('C1')).toBe('creator-team');
+
+      store.setChannelTeam('C1', true, null);
+      expect(store.channelTeam('C1')).toBeNull();
+    });
+
+    it('lists each tracked message in a channel once', () => {
+      const a = store.upsertPr(ref);
+      const b = store.upsertPr(other);
+      store.linkMessage(a.id, 'C1', '111.1');
+      store.linkMessage(b.id, 'C1', '111.1');
+      store.linkMessage(a.id, 'C1', '222.2');
+      store.linkMessage(a.id, 'C2', '333.3');
+
+      expect(store.messageTsInChannel('C1').sort()).toEqual(['111.1', '222.2']);
     });
   });
-
 });

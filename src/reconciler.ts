@@ -1,9 +1,9 @@
-import type { EmojiConfig, TeamMap } from './config.js';
+import type { EmojiConfig } from './config.js';
 import type { TrackedPr } from './db/schema.js';
 import type { Store } from './db/store.js';
 import type { Logger } from './logger.js';
 import { slackErrorCode, type ReactionClient } from './slack/reactions.js';
-import { aggregateState, computeCodeownerState, emojiForState } from './state.js';
+import { aggregateState, emojiForState, messageState } from './state.js';
 
 export interface ReconcileSummary {
   added: number;
@@ -34,23 +34,7 @@ export class Reconciler {
     private readonly reactions: ReactionClient,
     private readonly emoji: EmojiConfig,
     private readonly logger: Logger,
-    /** Null disables codeowner-aware behaviour entirely. */
-    private readonly teamMap: TeamMap | null = null,
   ) {}
-
-  /**
-   * The team whose point of view this channel's reaction should take, or
-   * undefined for the general "is this PR ready?" view.
-   *
-   * Only a private channel gets a team view, and only one the team map names:
-   * privacy is the proxy for audience. A public channel is read by several
-   * teams, so a single team's sign-off must not speak for the rest.
-   */
-  private teamViewFor(channelId: string): string | undefined {
-    if (!this.teamMap) return undefined;
-    if (this.store.isChannelPrivate(channelId) !== true) return undefined;
-    return this.teamMap.channels.get(channelId);
-  }
 
   /**
    * Reconciles every Slack message that links `pr`. Each message is recomputed
@@ -102,8 +86,11 @@ export class Reconciler {
   ): Promise<ReconcileSummary> {
     const summary = emptySummary();
     const prs = this.store.prsForMessage(channelId, messageTs);
-    const teamSlug = this.teamViewFor(channelId);
-    const state = aggregateState(prs.map((p) => computeCodeownerState(p, teamSlug)));
+    // Only a private channel set to a team gets a team view: privacy is the
+    // proxy for audience. A public channel is read by several teams, so one
+    // team's sign-off must not speak for the rest.
+    const teamSlug = this.store.channelTeam(channelId);
+    const state = aggregateState(prs.map((p) => messageState(p, teamSlug)));
     const target = state ? emojiForState(state, this.emoji) : null;
     const current =
       knownCurrent !== undefined ? knownCurrent : this.store.messageReaction(channelId, messageTs);

@@ -7,8 +7,6 @@ const TERMINAL_STATES: PrState[] = ['merged', 'closed'];
 
 export interface PollResult {
   state: PrState;
-  approvals: number;
-  requiredApprovals: number;
   /** JSON-serialized CodeownerStatus. Undefined = leave the existing value untouched. */
   codeownerStatus?: string | null;
 }
@@ -20,29 +18,28 @@ export interface PollResult {
 export class Store {
   constructor(private readonly db: Db) {}
 
-  /**
-   * Inserts the PR if it is new, otherwise returns the existing row (refreshing
-   * `requiredApprovals` so a config change takes effect on the next poll).
-   */
-  upsertPr(ref: PrRef, requiredApprovals: number): TrackedPr {
-    const row = this.db
+  /** Inserts the PR if it is new, otherwise returns the existing row. */
+  upsertPr(ref: PrRef): TrackedPr {
+    const inserted = this.db
       .insert(trackedPrs)
       .values({
         owner: ref.owner,
         repo: ref.repo,
         number: ref.number,
         state: 'no_reviews',
-        approvals: 0,
-        requiredApprovals,
         createdAt: Date.now(),
       })
-      .onConflictDoUpdate({
-        target: [trackedPrs.owner, trackedPrs.repo, trackedPrs.number],
-        set: { requiredApprovals },
-      })
+      .onConflictDoNothing({ target: [trackedPrs.owner, trackedPrs.repo, trackedPrs.number] })
       .returning()
       .get();
-    return row;
+
+    if (inserted) return inserted;
+
+    const existing = this.findPr(ref);
+    if (!existing) {
+      throw new Error(`tracked_prs row vanished for ${ref.owner}/${ref.repo}#${ref.number}`);
+    }
+    return existing;
   }
 
   /** Links a Slack message to a PR. Idempotent — re-posting or editing is safe. */
@@ -78,7 +75,7 @@ export class Store {
   /**
    * Records whether a Slack channel is private. Learned from `channel_type` on
    * message events; `link_shared` does not carry it, so a channel stays unknown
-   * until a message event arrives from it.
+   * until a message event arrives from it. Leaves any team setting alone.
    */
   setChannelPrivacy(channelId: string, isPrivate: boolean, now = Date.now()): void {
     this.db
@@ -91,14 +88,41 @@ export class Store {
       .run();
   }
 
-  /** Whether a channel is private, or undefined if we have never seen a message there. */
-  isChannelPrivate(channelId: string): boolean | undefined {
+  /** Sets or clears (null) the GitHub team a channel represents. */
+  setChannelTeam(channelId: string, isPrivate: boolean, team: string | null, now = Date.now()): void {
+    this.db
+      .insert(slackChannels)
+      .values({ channelId, isPrivate, team, updatedAt: now })
+      .onConflictDoUpdate({
+        target: slackChannels.channelId,
+        set: { isPrivate, team, updatedAt: now },
+      })
+      .run();
+  }
+
+  /**
+   * The GitHub team whose progress a channel's messages show, or null for the
+   * whole-PR view. A team is honoured only while the channel is known to be
+   * private: anyone can tag any team in a public channel, so a team setting
+   * there could signal "done" to people who are still needed.
+   */
+  channelTeam(channelId: string): string | null {
     const row = this.db
-      .select({ isPrivate: slackChannels.isPrivate })
+      .select({ isPrivate: slackChannels.isPrivate, team: slackChannels.team })
       .from(slackChannels)
       .where(eq(slackChannels.channelId, channelId))
       .get();
-    return row?.isPrivate;
+    return row?.isPrivate === true ? row.team : null;
+  }
+
+  /** Distinct message timestamps tracked in one channel. */
+  messageTsInChannel(channelId: string): string[] {
+    return this.db
+      .selectDistinct({ messageTs: prMessages.messageTs })
+      .from(prMessages)
+      .where(eq(prMessages.channelId, channelId))
+      .all()
+      .map((row) => row.messageTs);
   }
 
   getPr(id: number): TrackedPr | undefined {
@@ -177,8 +201,6 @@ export class Store {
 
     const set = {
       state: result.state,
-      approvals: result.approvals,
-      requiredApprovals: result.requiredApprovals,
       lastPolledAt: now,
       closedAt,
       unreachableSince,

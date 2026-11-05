@@ -1,13 +1,18 @@
 /**
- * The states a tracked PR can be in. The first five follow the PR's lifecycle;
- * `unknown` is orthogonal — it means GitHub stopped telling us anything about
- * this PR (expired token, revoked access, repo gone), so the last state we
- * computed can no longer be trusted.
+ * The states a PR can show. `unknown` is orthogonal to the rest — it means
+ * GitHub stopped telling us anything about this PR (expired token, revoked
+ * access, repo gone), so the last state we computed can no longer be trusted.
+ *
+ * `partial` and `team_done` only ever describe a PR as seen from a private
+ * channel set to a team; they are never stored on the PR itself. Everywhere
+ * else a PR is either waiting, blocked, approved by the codeowner bot, or
+ * finished.
  */
 export const PR_STATES = [
   'no_reviews',
   'changes_requested',
   'partial',
+  'team_done',
   'approved',
   'merged',
   'closed',

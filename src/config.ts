@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 /**
@@ -22,13 +21,6 @@ const boolish = z
   })
   .transform((s) => s === 'true' || s === '1' || s === 'yes');
 
-const channelList = z.string().transform((s) =>
-  s
-    .split(',')
-    .map((c) => c.trim())
-    .filter((c) => c.length > 0),
-);
-
 /**
  * Optional `owner/repo` allowlist. Lower-cased to match the parser, which
  * normalises links the same way (GitHub treats both case-insensitively).
@@ -51,7 +43,8 @@ const envSchema = z.object({
   GITHUB_TOKEN: z.string().min(1, 'required (read-only Pull Requests PAT)'),
   /** Empty means "any repo the GitHub token can see". */
   WATCHED_REPOS: repoList.default(''),
-  REQUIRED_APPROVALS: z.coerce.number().int().min(1).default(2),
+  /** GitHub login of the codeowner bot whose PR comment decides approval. */
+  CODEOWNER_BOT_LOGIN: z.string().trim().min(1).default('mmllc-gh'),
   POLL_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(90),
   CLEANUP_TTL_DAYS: z.coerce.number().int().min(1).default(7),
   /** How long to keep showing "unknown" before giving up on a PR entirely. */
@@ -59,6 +52,7 @@ const envSchema = z.object({
   EMOJI_CHANGES_REQUESTED: emojiName.default('request-changes'),
   EMOJI_NO_REVIEWS: emojiName.default('please'),
   EMOJI_PARTIAL: emojiName.default('1of2'),
+  EMOJI_TEAM_DONE: emojiName.default('ballot_box_with_check'),
   EMOJI_APPROVED: emojiName.default('white_check_mark'),
   EMOJI_MERGED: emojiName.default('merged'),
   EMOJI_CLOSED: emojiName.default('x'),
@@ -72,26 +66,13 @@ const envSchema = z.object({
    * also scan plain message text by default. Both paths are idempotent upserts.
    */
   ENABLE_MESSAGE_SCAN: boolish.default('true'),
-  /** Path to the JSON file naming the codeowner bot and mapping private channels to teams. */
-  TEAM_MAP_FILE: z.string().optional(),
 });
-
-export interface TeamMap {
-  /** GitHub login of the codeowner bot that posts status comments. */
-  botLogin: string;
-  /**
-   * Slack channel ID → GitHub team slug, for private channels.
-   *
-   * Only private channels take a team view, so an entry for a public channel
-   * has no effect — see `computeCodeownerState`.
-   */
-  channels: Map<string, string>;
-}
 
 export type EmojiConfig = {
   changesRequested: string | null;
   noReviews: string | null;
   partial: string | null;
+  teamDone: string | null;
   approved: string | null;
   merged: string | null;
   closed: string | null;
@@ -103,7 +84,7 @@ export interface Config {
   github: { token: string; baseUrl: string };
   /** Empty set means every repo is allowed. */
   watchedRepos: Set<string>;
-  requiredApprovals: number;
+  codeownerBotLogin: string;
   pollIntervalMs: number;
   cleanupTtlMs: number;
   unreachableTtlMs: number;
@@ -111,42 +92,6 @@ export interface Config {
   databasePath: string;
   logLevel: string;
   enableMessageScan: boolean;
-  /** Null when TEAM_MAP_FILE is not set — disables codeowner-aware emoji. */
-  teamMap: TeamMap | null;
-}
-
-function loadTeamMap(filePath: string): TeamMap {
-  let raw: string;
-  try {
-    raw = readFileSync(filePath, 'utf-8');
-  } catch (err) {
-    throw new Error(`TEAM_MAP_FILE: cannot read file at ${filePath}: ${(err as Error).message}`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`TEAM_MAP_FILE: ${filePath} is not valid JSON`);
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('TEAM_MAP_FILE: root value must be a JSON object');
-  }
-
-  const obj = parsed as Record<string, unknown>;
-  if (typeof obj['botLogin'] !== 'string' || !obj['botLogin']) {
-    throw new Error('TEAM_MAP_FILE: "botLogin" must be a non-empty string');
-  }
-
-  const channels = new Map<string, string>();
-  if (obj['channels'] && typeof obj['channels'] === 'object' && !Array.isArray(obj['channels'])) {
-    for (const [k, v] of Object.entries(obj['channels'] as Record<string, unknown>)) {
-      if (typeof v === 'string' && v) channels.set(k, v);
-    }
-  }
-
-  return { botLogin: obj['botLogin'], channels };
 }
 
 const orNull = (s: string): string | null => (s === '' ? null : s);
@@ -164,7 +109,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     slack: { botToken: e.SLACK_BOT_TOKEN, appToken: e.SLACK_APP_TOKEN },
     github: { token: e.GITHUB_TOKEN, baseUrl: e.GITHUB_API_BASE_URL },
     watchedRepos: new Set(e.WATCHED_REPOS),
-    requiredApprovals: e.REQUIRED_APPROVALS,
+    codeownerBotLogin: e.CODEOWNER_BOT_LOGIN,
     pollIntervalMs: e.POLL_INTERVAL_SECONDS * 1000,
     cleanupTtlMs: e.CLEANUP_TTL_DAYS * 24 * 60 * 60 * 1000,
     unreachableTtlMs: e.UNREACHABLE_TTL_DAYS * 24 * 60 * 60 * 1000,
@@ -172,6 +117,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       changesRequested: orNull(e.EMOJI_CHANGES_REQUESTED),
       noReviews: orNull(e.EMOJI_NO_REVIEWS),
       partial: orNull(e.EMOJI_PARTIAL),
+      teamDone: orNull(e.EMOJI_TEAM_DONE),
       approved: orNull(e.EMOJI_APPROVED),
       merged: orNull(e.EMOJI_MERGED),
       closed: orNull(e.EMOJI_CLOSED),
@@ -180,6 +126,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databasePath: e.DATABASE_PATH,
     logLevel: e.LOG_LEVEL,
     enableMessageScan: e.ENABLE_MESSAGE_SCAN,
-    teamMap: e.TEAM_MAP_FILE ? loadTeamMap(e.TEAM_MAP_FILE) : null,
   };
 }

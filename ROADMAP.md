@@ -1,5 +1,10 @@
 # mm-slack-cb-pr-status
 
+> The original v1 design, kept for its reasoning. Review state is no longer
+> counted from approvals: it now reflects the codeowner bot's comment, with
+> per-team progress in private channels. See [README.md](README.md) for current
+> behavior.
+
 A Slack bot that watches a review channel for GitHub PR links and keeps an emoji on each message reflecting the PR's current review state — so the team can see at a glance what still needs eyes, without anyone manually managing reactions.
 
 ## Behavior

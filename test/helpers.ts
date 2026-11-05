@@ -19,7 +19,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     slack: { botToken: 'xoxb-test', appToken: 'xapp-test' },
     github: { token: 'ghp-test', baseUrl: 'https://api.github.com' },
     watchedRepos: new Set<string>(),
-    requiredApprovals: 2,
+    codeownerBotLogin: 'mmllc-gh',
     pollIntervalMs: 90_000,
     cleanupTtlMs: 7 * 24 * 60 * 60 * 1000,
     unreachableTtlMs: 7 * 24 * 60 * 60 * 1000,
@@ -27,6 +27,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
       changesRequested: 'request-changes',
       noReviews: 'please',
       partial: '1of2',
+      teamDone: 'ballot_box_with_check',
       approved: 'white_check_mark',
       merged: 'merged',
       closed: 'x',
@@ -35,7 +36,6 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     databasePath: ':memory:',
     logLevel: 'silent',
     enableMessageScan: true,
-    teamMap: null,
     ...overrides,
   };
 }
@@ -104,8 +104,6 @@ export class FakeGitHubClient implements GitHubClient {
     this.statuses.set(FakeGitHubClient.key(ref), {
       merged: false,
       closed: false,
-      draft: false,
-      approvals: 0,
       changesRequested: 0,
       title: 'test pr',
       ...status,

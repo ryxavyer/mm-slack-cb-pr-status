@@ -55,7 +55,7 @@ export class PrService {
       }
 
       try {
-        const pr = this.store.upsertPr(ref, this.config.requiredApprovals);
+        const pr = this.store.upsertPr(ref);
         const message = this.store.linkMessage(pr.id, channelId, messageTs);
         log.info({ prId: pr.id, messageId: message.id, state: pr.state }, 'tracking pr link');
         tracked.push(pr);
@@ -75,6 +75,35 @@ export class PrService {
     }
   }
 
+  /**
+   * Sets (or clears, with null) the GitHub team a private channel represents,
+   * then re-reconciles the messages already tracked there so the change shows
+   * straight away. Refused for a public channel, where anyone can tag any team.
+   */
+  async setChannelTeam(
+    channelId: string,
+    isPrivate: boolean,
+    team: string | null,
+  ): Promise<'saved' | 'public_channel'> {
+    if (!isPrivate) {
+      this.store.setChannelPrivacy(channelId, false);
+      return 'public_channel';
+    }
+    this.store.setChannelTeam(channelId, true, team);
+    this.logger.info({ channel: channelId, team }, 'channel team updated');
+
+    for (const messageTs of this.store.messageTsInChannel(channelId)) {
+      try {
+        await this.reconciler.reconcileMessage(channelId, messageTs);
+      } catch (error) {
+        this.logger
+          .child({ channel: channelId, messageTs })
+          .error({ err: error }, 'failed to reconcile message after channel team change');
+      }
+    }
+    return 'saved';
+  }
+
   /** An empty `WATCHED_REPOS` allows every repo the GitHub token can see. */
   private isWatchedRepo(ref: PrRef): boolean {
     const allowed = this.config.watchedRepos;
@@ -92,26 +121,19 @@ export class PrService {
     const ref: PrRef = { owner: pr.owner, repo: pr.repo, number: pr.number };
     const log = this.logger.child({ pr: prRefKey(ref), prId: pr.id });
 
-    const requiredApprovals = this.config.requiredApprovals;
     let state: PrState;
-    let approvals: number;
     let codeownerStatus: string | null | undefined = undefined; // undefined = keep existing
 
     try {
       const status = await this.github.fetchPrStatus(ref);
+      const codeowners = await this.github.fetchCodeownerStatus(ref, this.config.codeownerBotLogin);
       state = computeState({
         merged: status.merged,
         closed: status.closed,
-        approvals: status.approvals,
         changesRequested: status.changesRequested,
-        requiredApprovals,
+        codeowners,
       });
-      approvals = status.approvals;
-
-      if (this.config.teamMap) {
-        const co = await this.github.fetchCodeownerStatus(ref, this.config.teamMap.botLogin);
-        codeownerStatus = co ? JSON.stringify(co) : null;
-      }
+      codeownerStatus = codeowners ? JSON.stringify(codeowners) : null;
     } catch (error) {
       if (!(error instanceof PrUnreachableError)) throw error;
 
@@ -120,7 +142,6 @@ export class PrService {
       // and we must not claim the PR is closed — so say "unknown" out loud and
       // keep polling, which restores the real state as soon as access returns.
       state = 'unknown';
-      approvals = pr.approvals;
       if (pr.state !== 'unknown') {
         log.warn(
           { reason: error.reason, status: error.status, previousState: pr.state },
@@ -129,17 +150,15 @@ export class PrService {
       }
     }
 
-    const pollResult = { state, approvals, requiredApprovals, ...(codeownerStatus !== undefined && { codeownerStatus }) };
-    const changed = state !== pr.state || approvals !== pr.approvals || (codeownerStatus !== undefined && codeownerStatus !== pr.codeownerStatus);
-    const updated = this.store.recordPoll(pr.id, pollResult) ?? { ...pr, state, approvals };
+    const pollResult = { state, ...(codeownerStatus !== undefined && { codeownerStatus }) };
+    const changed =
+      state !== pr.state || (codeownerStatus !== undefined && codeownerStatus !== pr.codeownerStatus);
+    const updated = this.store.recordPoll(pr.id, pollResult) ?? { ...pr, state };
 
     if (state !== pr.state) {
-      log.info(
-        { from: pr.state, to: state, approvals, requiredApprovals },
-        'pr state transition',
-      );
+      log.info({ from: pr.state, to: state }, 'pr state transition');
     } else if (changed) {
-      log.debug({ state, approvals }, 'approval count changed');
+      log.debug({ state }, 'codeowner status changed');
     }
 
     const summary = await this.reconciler.reconcilePr(updated);

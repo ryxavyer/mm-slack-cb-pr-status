@@ -10,7 +10,7 @@ const required = {
 describe('loadConfig', () => {
   it('applies the documented defaults', () => {
     const config = loadConfig({ ...required });
-    expect(config.requiredApprovals).toBe(2);
+    expect(config.codeownerBotLogin).toBe('mmllc-gh');
     expect(config.pollIntervalMs).toBe(90_000);
     expect(config.cleanupTtlMs).toBe(7 * 24 * 60 * 60 * 1000);
     expect(config.databasePath).toBe('/data/bot.sqlite');
@@ -18,6 +18,7 @@ describe('loadConfig', () => {
       changesRequested: 'request-changes',
       noReviews: 'please',
       partial: '1of2',
+      teamDone: 'ballot_box_with_check',
       approved: 'white_check_mark',
       merged: 'merged',
       closed: 'x',
@@ -59,11 +60,17 @@ describe('loadConfig', () => {
   });
 
   it('rejects nonsense numbers instead of silently defaulting', () => {
-    expect(() => loadConfig({ ...required, REQUIRED_APPROVALS: 'many' })).toThrow(
-      /REQUIRED_APPROVALS/,
+    expect(() => loadConfig({ ...required, CLEANUP_TTL_DAYS: 'many' })).toThrow(
+      /CLEANUP_TTL_DAYS/,
     );
     expect(() => loadConfig({ ...required, POLL_INTERVAL_SECONDS: '1' })).toThrow(
       /POLL_INTERVAL_SECONDS/,
+    );
+  });
+
+  it('rejects an empty codeowner bot login', () => {
+    expect(() => loadConfig({ ...required, CODEOWNER_BOT_LOGIN: '  ' })).toThrow(
+      /CODEOWNER_BOT_LOGIN/,
     );
   });
 

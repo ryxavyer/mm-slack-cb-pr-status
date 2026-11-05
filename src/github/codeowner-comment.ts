@@ -77,8 +77,11 @@ export function parseCodeownerComment(body: string): CodeownerStatus | null {
     requirements.push({ teams, satisfied: line.includes(SATISFIED_MARKER) });
   }
 
+  // A comment with a header but nothing we could parse proves nothing, so it
+  // never counts as satisfied. A PR with no owned files still carries the
+  // minimum-review line, and meeting it is all the bot asks.
   const allSatisfied =
-    requirements.length > 0 &&
+    (requirements.length > 0 || minimum !== null) &&
     requirements.every((r) => r.satisfied) &&
     (minimum === null || minimum.met);
 

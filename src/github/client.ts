@@ -1,14 +1,12 @@
 import { Octokit } from 'octokit';
 import type { CodeownerStatus, PrRef } from '../types.js';
 import { parseCodeownerComment } from './codeowner-comment.js';
-import { summariseReviews } from './reviews.js';
+import { countChangesRequested } from './reviews.js';
 
 /** What a poll needs to know about a PR. */
 export interface PrStatus {
   merged: boolean;
   closed: boolean;
-  draft: boolean;
-  approvals: number;
   /** Reviewers currently blocking the PR with a changes-requested review. */
   changesRequested: number;
   title: string;
@@ -167,10 +165,9 @@ export class OctokitGitHubClient implements GitHubClient {
       return {
         merged: Boolean(pr.merged ?? pr.merged_at),
         closed: pr.state === 'closed',
-        draft: Boolean(pr.draft),
         // `requested_reviewers` is what makes a re-requested review read as
-        // pending again rather than blocking forever. See summariseReviews.
-        ...summariseReviews(reviews, pr.requested_reviewers ?? []),
+        // pending again rather than blocking forever. See countChangesRequested.
+        changesRequested: countChangesRequested(reviews, pr.requested_reviewers ?? []),
         title: pr.title ?? '',
       };
     } catch (error) {

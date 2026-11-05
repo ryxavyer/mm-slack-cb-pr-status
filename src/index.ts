@@ -29,7 +29,6 @@ async function main(): Promise<void> {
     new WebApiReactionClient(webClient),
     config.emoji,
     logger,
-    config.teamMap,
   );
   const service = new PrService(store, github, reconciler, config, logger);
   const poller = new Poller(service, config.pollIntervalMs, logger);
@@ -38,7 +37,7 @@ async function main(): Promise<void> {
   logger.info(
     {
       watchedRepos: config.watchedRepos.size > 0 ? [...config.watchedRepos] : 'any',
-      requiredApprovals: config.requiredApprovals,
+      codeownerBot: config.codeownerBotLogin,
       pollIntervalSeconds: config.pollIntervalMs / 1000,
       managedEmojis: managedEmojis(config.emoji),
       messageScan: config.enableMessageScan,

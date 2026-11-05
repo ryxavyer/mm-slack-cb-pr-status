@@ -5,77 +5,50 @@ import type { CodeownerStatus, PrState } from './types.js';
 export interface StateInput {
   merged: boolean;
   closed: boolean;
-  approvals: number;
   /** Reviewers currently blocking with a changes-requested review. */
   changesRequested: number;
-  requiredApprovals: number;
+  /** The codeowner bot's latest verdict, or null when it hasn't commented. */
+  codeowners: CodeownerStatus | null;
 }
 
 /**
- * The state machine. Order matters:
- * - A merged PR is merged regardless of how many approvals it collected, and a
- *   closed PR outranks its review state too.
- * - An outstanding changes-requested review outranks *any* approval count. Two
- *   approvals plus one reviewer blocking is not ready to merge, and showing it
- *   as approved would be actively misleading.
+ * The state machine for a PR as a whole. Order matters:
+ * - A merged PR is merged regardless of its reviews, and a closed PR outranks
+ *   its review state too.
+ * - An outstanding changes-requested review outranks the codeowner bot's
+ *   verdict. A blocked PR is not ready to merge, whatever else it collected.
+ * - Approval is the codeowner bot's call alone. We never count approvals
+ *   ourselves: we can't tell which team an approval came from, or how many a
+ *   PR needs. No comment from the bot means no approval.
  */
-export function computeState({
-  merged,
-  closed,
-  approvals,
-  changesRequested,
-  requiredApprovals,
-}: StateInput): PrState {
+export function computeState({ merged, closed, changesRequested, codeowners }: StateInput): PrState {
   if (merged) return 'merged';
   if (closed) return 'closed';
   if (changesRequested > 0) return 'changes_requested';
-  if (approvals >= requiredApprovals) return 'approved';
-  if (approvals > 0) return 'partial';
+  if (codeowners?.allSatisfied) return 'approved';
   return 'no_reviews';
 }
 
 /**
- * Applies the codeowner bot's view on top of the approval count.
+ * The state a PR shows on one message, given the GitHub team of the private
+ * channel it was posted in (null everywhere else).
  *
- * There are two questions a reaction can answer, and which one is right depends
- * on who is reading it.
+ * Without a team this is just the PR's own state, so public channels only ever
+ * see "waiting", "blocked", "approved by the codeowner bot" or "finished".
  *
- * **Public channels, and anywhere without a team (the default).** Several teams
- * watch these, so the reaction has to mean "is this PR ready?". The count
- * decides, and codeowner data does exactly one thing: while any review group is
- * outstanding the PR is not finished, so it may not show as approved. It can
- * only ever hold a PR back — one team's sign-off must never advance the emoji,
- * because it would be claiming something on behalf of the other groups reading.
+ * With a team, a PR still waiting on the whole can show progress for that team:
+ *   - `team_done` when every requirement naming the team is satisfied and the
+ *     bot's minimum review count is met — the bot needs nothing more from the
+ *     team, though other code owners are still pending.
+ *   - `partial` when the team's requirements are satisfied but the bot reports
+ *     exactly one of two required reviews, so `1of2` means literally that.
  *
- * **A private channel mapped to a team.** Only that team is in the room, so the
- * reaction answers the narrower and more useful "do we still owe a review?":
- *
- *   - Team's group outstanding      -> held below approved
- *   - Team's group signed off       -> approved, even on a single approval,
- *                                      provided somebody is going to meet the
- *                                      approval count
- *   - Team's group signed off, count short, and no other group left to meet it
- *                                   -> held at partial: the next approval has to
- *                                      come from this team
- *   - Team owns none of the changed files -> the approval count alone; the only
- *                                      thing they can still owe is a +1 towards
- *                                      it, and another group's outstanding
- *                                      review is not this channel's question
- *
- * Terminal and blocking states (merged, closed, unknown, changes_requested)
- * always pass through unchanged.
+ * A team the bot doesn't name only gets credit through the minimum count, so a
+ * PR that touches none of its files never shows `team_done` before anyone has
+ * reviewed it.
  */
-export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState {
-  if (
-    pr.state === 'merged' ||
-    pr.state === 'closed' ||
-    pr.state === 'unknown' ||
-    pr.state === 'changes_requested'
-  ) {
-    return pr.state;
-  }
-
-  if (!pr.codeownerStatus) return pr.state;
+export function messageState(pr: TrackedPr, team: string | null): PrState {
+  if (pr.state !== 'no_reviews' || team === null || !pr.codeownerStatus) return pr.state;
 
   let status: CodeownerStatus;
   try {
@@ -84,31 +57,15 @@ export function computeCodeownerState(pr: TrackedPr, teamSlug?: string): PrState
     return pr.state;
   }
 
-  const outstanding = status.requirements.filter((r) => !r.satisfied);
+  const slug = team.toLowerCase();
+  const teamReqs = status.requirements.filter((r) => r.teams.some((t) => t.toLowerCase() === slug));
+  if (!teamReqs.every((r) => r.satisfied)) return 'no_reviews';
 
-  if (teamSlug) {
-    const teamReqs = status.requirements.filter((r) => r.teams.includes(teamSlug));
-
-    // The team owns none of the changed files. Nothing is owed of them beyond
-    // an approval towards the count, so the count alone answers it — another
-    // group's outstanding review is not this channel's question, and holding
-    // the message at partial over it would be asking for an action nobody here
-    // can take.
-    if (teamReqs.length === 0) return pr.state;
-
-    if (!teamReqs.every((r) => r.satisfied)) {
-      return pr.state === 'approved' ? 'partial' : pr.state;
-    }
-
-    // This team is done. The only thing that can still be owed of them is
-    // another approval to meet the count, and only when no other group is left
-    // whose sign-off would meet it instead.
-    if (pr.state === 'approved' || outstanding.length > 0) return 'approved';
-    return pr.state;
-  }
-
-  if (outstanding.length === 0) return pr.state;
-  return pr.state === 'approved' ? 'partial' : pr.state;
+  const { minimum } = status;
+  if (minimum === null) return teamReqs.length > 0 ? 'team_done' : 'no_reviews';
+  if (minimum.met) return 'team_done';
+  if (minimum.required === 2 && minimum.found === 1) return 'partial';
+  return 'no_reviews';
 }
 
 /**
@@ -139,6 +96,7 @@ const AGGREGATE_PRECEDENCE: readonly PrState[] = [
   'changes_requested',
   'no_reviews',
   'partial',
+  'team_done',
   'approved',
   'closed',
   'merged',
@@ -169,6 +127,8 @@ export function emojiForState(state: PrState, emoji: EmojiConfig): string | null
       return emoji.changesRequested;
     case 'partial':
       return emoji.partial;
+    case 'team_done':
+      return emoji.teamDone;
     case 'approved':
       return emoji.approved;
     case 'merged':
@@ -189,6 +149,7 @@ export function managedEmojis(emoji: EmojiConfig): string[] {
     emoji.noReviews,
     emoji.changesRequested,
     emoji.partial,
+    emoji.teamDone,
     emoji.approved,
     emoji.merged,
     emoji.closed,

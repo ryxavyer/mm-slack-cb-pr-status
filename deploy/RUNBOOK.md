@@ -28,17 +28,19 @@ Create the app from [slack-manifest.yml](../slack-manifest.yml) — api.slack.co
    `connections:write`. That is `SLACK_APP_TOKEN` (`xapp-…`).
 2. **Install App** → install to the workspace (may need admin approval). That
    gives you `SLACK_BOT_TOKEN` (`xoxb-…`).
-3. `/invite @CB PR Status` in each channel you want watched.
-4. Create the custom `:merged:` emoji if the workspace doesn't have one — or
-   point `EMOJI_MERGED` at one that exists.
-5. Collect the channel IDs (channel details → the `C…` ID at the bottom) for
-   `WATCHED_CHANNELS`.
+3. `/invite @CB PR Status` in each channel you want watched. The bot ignores
+   every channel it isn't in.
+4. In a private team channel that should see its team's progress, post
+   `@CB PR Status team <github-team-slug>` (see [README.md](../README.md)).
+   Public channels need no setup.
+5. Create the custom `:merged:` and `:please:` emoji if the workspace doesn't
+   have them — or point `EMOJI_MERGED` / `EMOJI_NO_REVIEWS` at ones that exist.
 
 Two notes on the manifest's scopes. `github.com` must stay in `unfurl_domains`
-or Slack never delivers `link_shared`. And `channels:history` /
-`message.channels` exist only for the text-scan fallback — drop them (along with
-the `groups:*` pair, which is for private channels) if you run with
-`ENABLE_MESSAGE_SCAN=false` and watch only public channels.
+or Slack never delivers `link_shared`. And keep `channels:history` /
+`groups:history` with their `message.*` events even with
+`ENABLE_MESSAGE_SCAN=false`: message events are the only way the bot learns
+whether a channel is private, and they carry the team setup messages.
 
 ### 2. GitHub token
 
@@ -49,7 +51,7 @@ every poll 404s and every tracked PR shows `:sleeping:`.
 ### 3. Configuration
 
 Every variable is documented in [.env.example](../.env.example). Copy it, fill in
-the tokens and channel IDs, and pass it to the container or install it as
+the tokens, and pass it to the container or install it as
 `/etc/mm-slack-cb-pr-status.env` for systemd.
 
 To run locally: `npm ci && npm run dev`, with `DATABASE_PATH=./data/bot.sqlite`.
@@ -134,8 +136,9 @@ journalctl -u mm-slack-cb-pr-status -f -o cat | jq .
 
 End-to-end smoke test: post a link to an open PR in a watched channel. Within a
 few seconds the log should show `tracking pr link`, and the message should carry
-the right emoji (none if the PR has no approvals yet — approve it and wait one
-poll interval).
+the right emoji (none until the codeowner bot is satisfied — or, in a private
+channel set to a team, until that team has reviewed — then within one poll
+interval).
 
 ## Backup and restore
 
@@ -193,7 +196,9 @@ its reactions and stops tracking those PRs.
 
 | Symptom | Likely cause |
 | ------- | ------------ |
-| No emoji ever appears | Channel ID not in `WATCHED_CHANNELS`, or the bot was never `/invite`d into the channel |
+| No emoji ever appears | The bot was never `/invite`d into the channel |
+| PRs never get `:white_check_mark:` | The codeowner bot hasn't commented on them (its comment is the only approval signal), or `CODEOWNER_BOT_LOGIN` doesn't match its GitHub login |
+| A private team channel shows no team progress | The team was never set (`@CB PR Status team <slug>`), the slug doesn't match the GitHub team name in the codeowner bot's comment, or the channel was converted to public |
 | `emoji does not exist in this workspace` | `EMOJI_MERGED` names a custom emoji that hasn't been created |
 | Every PR shows `:sleeping:` | `GITHUB_TOKEN` expired, was revoked, lost repo access, or isn't SSO-authorised. Look for `pr unreachable on github` lines — they carry the `reason` and HTTP `status`. Fix the token and the emoji correct themselves on the next poll; no restart needed |
 | `poll cycle complete` with `failed > 0` | Transient GitHub errors; check the `poll failed for pr` lines |
@@ -204,7 +209,8 @@ its reactions and stops tracking those PRs.
 
 ## Capacity
 
-Each poll cycle makes ~2 GitHub requests per tracked open PR (the PR, plus a page
-of reviews). At 20 open PRs on a 90-second interval that is ~1,600 requests/hour
+Each poll cycle makes ~3 GitHub requests per tracked open PR (the PR, a page
+of reviews, a page of comments for the codeowner bot's verdict). At 20 open PRs
+on a 90-second interval that is ~2,400 requests/hour
 against a 5,000/hour authenticated limit. If you ever approach it, raise
 `POLL_INTERVAL_SECONDS` — the only cost is a slower emoji update.

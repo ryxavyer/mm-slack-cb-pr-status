@@ -1,72 +1,60 @@
 import { describe, expect, it } from 'vitest';
 import type { EmojiConfig } from '../src/config.js';
 import type { TrackedPr } from '../src/db/schema.js';
-import type { CodeownerStatus, PrState } from '../src/types.js';
+import type { CodeownerStatus } from '../src/types.js';
 import {
   aggregateState,
-  computeCodeownerState,
   computeState,
   emojiForState,
   isTerminal,
   managedEmojis,
+  messageState,
 } from '../src/state.js';
 
 const emoji: EmojiConfig = {
   changesRequested: 'request-changes',
   noReviews: 'please',
   partial: '1of2',
+  teamDone: 'ballot_box_with_check',
   approved: 'white_check_mark',
   merged: 'merged',
   closed: 'x',
   unknown: 'sleeping',
 };
 
+const SATISFIED: CodeownerStatus = { requirements: [], minimum: null, allSatisfied: true };
+const PENDING: CodeownerStatus = {
+  requirements: [{ teams: ['creator-team'], satisfied: true }],
+  minimum: { required: 2, found: 1, met: false },
+  allSatisfied: false,
+};
+
 describe('computeState', () => {
-  const base = {
-    merged: false,
-    closed: false,
-    approvals: 0,
-    changesRequested: 0,
-    requiredApprovals: 2,
-  };
+  const base = { merged: false, closed: false, changesRequested: 0, codeowners: null };
 
-  it('reports no_reviews with zero approvals', () => {
+  it('reports no_reviews until the codeowner bot is satisfied', () => {
     expect(computeState(base)).toBe('no_reviews');
+    expect(computeState({ ...base, codeowners: PENDING })).toBe('no_reviews');
   });
 
-  it('reports partial below the required count', () => {
-    expect(computeState({ ...base, approvals: 1 })).toBe('partial');
-  });
-
-  it('reports approved at or above the required count', () => {
-    expect(computeState({ ...base, approvals: 2 })).toBe('approved');
-    expect(computeState({ ...base, approvals: 5 })).toBe('approved');
-  });
-
-  it('honours a required count of one', () => {
-    expect(computeState({ ...base, approvals: 1, requiredApprovals: 1 })).toBe('approved');
+  it('reports approved only on the codeowner bot’s say-so', () => {
+    expect(computeState({ ...base, codeowners: SATISFIED })).toBe('approved');
   });
 
   it('lets merged win over every review state', () => {
-    expect(computeState({ ...base, merged: true, closed: true, approvals: 0 })).toBe('merged');
-    expect(computeState({ ...base, merged: true, approvals: 2 })).toBe('merged');
+    expect(computeState({ ...base, merged: true, closed: true })).toBe('merged');
+    expect(computeState({ ...base, merged: true, codeowners: SATISFIED })).toBe('merged');
   });
 
   it('lets closed win over review state but not over merged', () => {
-    expect(computeState({ ...base, closed: true, approvals: 2 })).toBe('closed');
+    expect(computeState({ ...base, closed: true, codeowners: SATISFIED })).toBe('closed');
   });
 
-  it('reports changes_requested when a reviewer is blocking', () => {
+  it('lets a blocking review outrank the codeowner bot’s approval', () => {
     expect(computeState({ ...base, changesRequested: 1 })).toBe('changes_requested');
-    // The case that motivated this state: one approval, one reviewer blocking.
-    expect(computeState({ ...base, approvals: 1, changesRequested: 1 })).toBe('changes_requested');
-  });
-
-  it('lets a blocking review outrank a full set of approvals', () => {
-    // Enough approvals to merge, but someone is still blocking — reporting this
-    // as approved would be actively misleading.
-    expect(computeState({ ...base, approvals: 2, changesRequested: 1 })).toBe('changes_requested');
-    expect(computeState({ ...base, approvals: 9, changesRequested: 1 })).toBe('changes_requested');
+    expect(computeState({ ...base, changesRequested: 1, codeowners: SATISFIED })).toBe(
+      'changes_requested',
+    );
   });
 
   it('still lets merged and closed outrank a blocking review', () => {
@@ -75,14 +63,7 @@ describe('computeState', () => {
   });
 
   it('recovers once the blocking review is resolved', () => {
-    expect(computeState({ ...base, approvals: 2, changesRequested: 1 })).toBe('changes_requested');
-    expect(computeState({ ...base, approvals: 2, changesRequested: 0 })).toBe('approved');
-  });
-
-  it('moves backwards when an approval is revoked', () => {
-    expect(computeState({ ...base, approvals: 2 })).toBe('approved');
-    expect(computeState({ ...base, approvals: 1 })).toBe('partial');
-    expect(computeState({ ...base, approvals: 0 })).toBe('no_reviews');
+    expect(computeState({ ...base, changesRequested: 0, codeowners: SATISFIED })).toBe('approved');
   });
 });
 
@@ -107,6 +88,7 @@ describe('aggregateState', () => {
       'no_reviews',
       'changes_requested',
       'partial',
+      'team_done',
       'approved',
       'merged',
       'closed',
@@ -121,6 +103,8 @@ describe('aggregateState', () => {
     expect(aggregateState(['approved', 'no_reviews'])).toBe('no_reviews');
     expect(aggregateState(['merged', 'partial'])).toBe('partial');
     expect(aggregateState(['approved', 'partial'])).toBe('partial');
+    expect(aggregateState(['team_done', 'partial'])).toBe('partial');
+    expect(aggregateState(['approved', 'team_done'])).toBe('team_done');
     expect(aggregateState(['merged', 'closed'])).toBe('closed');
   });
 
@@ -163,6 +147,7 @@ describe('emojiForState', () => {
     expect(emojiForState('no_reviews', emoji)).toBe('please');
     expect(emojiForState('changes_requested', emoji)).toBe('request-changes');
     expect(emojiForState('partial', emoji)).toBe('1of2');
+    expect(emojiForState('team_done', emoji)).toBe('ballot_box_with_check');
     expect(emojiForState('approved', emoji)).toBe('white_check_mark');
     expect(emojiForState('merged', emoji)).toBe('merged');
     expect(emojiForState('closed', emoji)).toBe('x');
@@ -171,328 +156,124 @@ describe('emojiForState', () => {
 
   it('treats an unset emoji as "no reaction for this state"', () => {
     expect(emojiForState('closed', { ...emoji, closed: null })).toBeNull();
-    // Emptying EMOJI_NO_REVIEWS is how unreviewed PRs go back to bare.
-    expect(emojiForState('no_reviews', { ...emoji, noReviews: null })).toBeNull();
   });
 });
 
-describe('computeCodeownerState', () => {
-  function makePr(state: TrackedPr['state'], codeownerStatus: string | null = null): TrackedPr {
+describe('messageState', () => {
+  function makePr(state: TrackedPr['state'], codeownerStatus?: CodeownerStatus): TrackedPr {
     return {
       id: 1,
       owner: 'acme',
       repo: 'repo',
       number: 1,
       state,
-      approvals: 0,
-      requiredApprovals: 2,
       lastPolledAt: null,
       createdAt: Date.now(),
       closedAt: null,
       unreachableSince: null,
-      codeownerStatus,
+      codeownerStatus: codeownerStatus ? JSON.stringify(codeownerStatus) : null,
     };
   }
 
-  const serialise = (status: CodeownerStatus | null): string | null =>
-    status === null ? null : JSON.stringify(status);
+  const status = (
+    requirements: CodeownerStatus['requirements'],
+    minimum: CodeownerStatus['minimum'],
+  ): CodeownerStatus => ({ requirements, minimum, allSatisfied: false });
 
-  const req = (teams: string[], satisfied: boolean) => ({ teams, satisfied });
+  it('is the PR’s own state without a team', () => {
+    const pending = status([{ teams: ['creator-team'], satisfied: true }], null);
+    for (const state of ['no_reviews', 'approved', 'merged', 'changes_requested'] as const) {
+      expect(messageState(makePr(state, pending), null)).toBe(state);
+    }
+  });
 
-  // ---------------------------------------------------------------------------
-  // Every shape the codeowner bot's comment can parse into, split by the only
-  // question the logic now asks of it: is any review group still outstanding?
-  // ---------------------------------------------------------------------------
-  const OUTSTANDING: [string, CodeownerStatus][] = [
-    [
-      'one group, not signed off',
-      { requirements: [req(['creator-team'], false)], minimum: null, allSatisfied: false },
-    ],
-    [
-      'one group done, one not',
-      {
-        requirements: [req(['creator-team'], true), req(['platform-team'], false)],
-        minimum: null,
-        allSatisfied: false,
-      },
-    ],
-    [
-      'an OR group satisfied but AND rules outstanding',
-      {
-        requirements: [
-          req(['design-system-stewards'], false),
-          req(['viewer-team'], false),
-          req(['viewer-team', 'creator-team'], true),
+  it('passes every settled or blocking state through, even with a team', () => {
+    const done = status([{ teams: ['creator-team'], satisfied: true }], null);
+    for (const state of ['approved', 'merged', 'closed', 'unknown', 'changes_requested'] as const) {
+      expect(messageState(makePr(state, done), 'creator-team')).toBe(state);
+    }
+  });
+
+  it('shows nothing without a codeowner comment, even with a team', () => {
+    expect(messageState(makePr('no_reviews'), 'creator-team')).toBe('no_reviews');
+  });
+
+  it('reports team_done once the team is satisfied and the minimum is met', () => {
+    const pr = makePr(
+      'no_reviews',
+      status(
+        [
+          { teams: ['creator-team'], satisfied: true },
+          { teams: ['platform-team'], satisfied: false },
         ],
-        minimum: null,
-        allSatisfied: false,
-      },
-    ],
-  ];
-
-  const SETTLED: [string, CodeownerStatus][] = [
-    [
-      'the terminal "reviews satisfied" comment',
-      { requirements: [], minimum: null, allSatisfied: true },
-    ],
-    [
-      'every group signed off',
-      { requirements: [req(['creator-team'], true)], minimum: null, allSatisfied: true },
-    ],
-    [
-      'every group signed off, minimum met',
-      {
-        requirements: [req(['creator-team'], true)],
-        minimum: { required: 2, found: 2, met: true },
-        allSatisfied: true,
-      },
-    ],
-    [
-      // The bot's own minimum is deliberately not consulted: REQUIRED_APPROVALS
-      // is the count that decides, and every group has signed off.
-      'every group signed off, but the bot minimum is outstanding',
-      {
-        requirements: [req(['creator-team'], true)],
-        minimum: { required: 2, found: 1, met: false },
-        allSatisfied: false,
-      },
-    ],
-    [
-      'a header the parser found no groups in',
-      { requirements: [], minimum: null, allSatisfied: false },
-    ],
-  ];
-
-  const REVIEW_STATES = ['no_reviews', 'partial', 'approved'] as const;
-  const PASS_THROUGH = ['merged', 'closed', 'unknown', 'changes_requested'] as const;
-  const ALL_STATUSES = [...OUTSTANDING, ...SETTLED];
-
-  describe('with a review group still outstanding', () => {
-    for (const [name, status] of OUTSTANDING) {
-      describe(name, () => {
-        it('holds an otherwise-approved PR at partial', () => {
-          expect(computeCodeownerState(makePr('approved', serialise(status)))).toBe('partial');
-        });
-
-        it('leaves a partial PR at partial', () => {
-          expect(computeCodeownerState(makePr('partial', serialise(status)))).toBe('partial');
-        });
-
-        it('leaves an unreviewed PR at no_reviews', () => {
-          expect(computeCodeownerState(makePr('no_reviews', serialise(status)))).toBe('no_reviews');
-        });
-      });
-    }
+        { required: 2, found: 2, met: true },
+      ),
+    );
+    expect(messageState(pr, 'creator-team')).toBe('team_done');
+    expect(messageState(pr, 'platform-team')).toBe('no_reviews');
   });
 
-  describe('with no review group outstanding', () => {
-    for (const [name, status] of SETTLED) {
-      it(`leaves the approval count alone for ${name}`, () => {
-        for (const state of REVIEW_STATES) {
-          expect(computeCodeownerState(makePr(state, serialise(status))), state).toBe(state);
-        }
-      });
-    }
-
-    it('does not promote a PR that has not met REQUIRED_APPROVALS', () => {
-      // The bot saying every group is happy is not the same as the repo's own
-      // approval count being met, and the count is what decides.
-      const settled: CodeownerStatus = {
-        requirements: [req(['creator-team'], true)],
-        minimum: null,
-        allSatisfied: true,
-      };
-      expect(computeCodeownerState(makePr('partial', serialise(settled)))).toBe('partial');
-      expect(computeCodeownerState(makePr('no_reviews', serialise(settled)))).toBe('no_reviews');
-    });
+  it('reports team_done for a satisfied team when the bot sets no minimum', () => {
+    const pr = makePr(
+      'no_reviews',
+      status(
+        [
+          { teams: ['creator-team'], satisfied: true },
+          { teams: ['platform-team'], satisfied: false },
+        ],
+        null,
+      ),
+    );
+    expect(messageState(pr, 'creator-team')).toBe('team_done');
   });
 
-  describe('with no usable codeowner data', () => {
-    it('falls back to pr.state when the bot has not commented', () => {
-      for (const state of REVIEW_STATES) {
-        expect(computeCodeownerState(makePr(state, null)), state).toBe(state);
-      }
-    });
-
-    it('falls back to pr.state when the stored JSON will not parse', () => {
-      for (const state of REVIEW_STATES) {
-        expect(computeCodeownerState(makePr(state, '{not json')), state).toBe(state);
-      }
-    });
+  it('reports partial only when the bot literally reports one of two reviews', () => {
+    const reqs = [{ teams: ['creator-team'], satisfied: true }];
+    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 1, met: false })), 'creator-team')).toBe('partial');
+    expect(messageState(makePr('no_reviews', status(reqs, { required: 3, found: 1, met: false })), 'creator-team')).toBe('no_reviews');
+    expect(messageState(makePr('no_reviews', status(reqs, { required: 3, found: 2, met: false })), 'creator-team')).toBe('no_reviews');
   });
 
-  describe('terminal and blocking states', () => {
-    for (const state of PASS_THROUGH) {
-      it(`keeps ${state} for every codeowner status`, () => {
-        for (const [name, status] of ALL_STATUSES) {
-          expect(computeCodeownerState(makePr(state, serialise(status))), name).toBe(state);
-          expect(computeCodeownerState(makePr(state, null)), name).toBe(state);
-        }
-      });
-    }
+  it('never shows progress while any requirement naming the team is unsatisfied', () => {
+    const pr = makePr(
+      'no_reviews',
+      status(
+        [
+          { teams: ['creator-team'], satisfied: false },
+          { teams: ['creator-team', 'platform-team'], satisfied: true },
+        ],
+        { required: 2, found: 2, met: true },
+      ),
+    );
+    expect(messageState(pr, 'creator-team')).toBe('no_reviews');
   });
 
-  describe("a private channel's team view", () => {
-    // Only a private channel gets this: one team is in the room, so the reaction
-    // answers "do we still owe a review?" rather than "is this PR ready?".
-    const TEAM = 'monetization-team';
-
-    const withGroups = (groups: Record<string, boolean>): CodeownerStatus => {
-      const requirements = Object.entries(groups).map(([team, satisfied]) =>
-        req([team], satisfied),
-      );
-      return {
-        requirements,
-        minimum: null,
-        allSatisfied: requirements.length > 0 && requirements.every((r) => r.satisfied),
-      };
-    };
-
-    /** The five cases agreed for the Monetization channel, REQUIRED_APPROVALS=2. */
-    it('row 1: nothing reviewed and the team owes a review -> no_reviews', () => {
-      const status = withGroups({ [TEAM]: false });
-      expect(computeCodeownerState(makePr('no_reviews', serialise(status)), TEAM)).toBe(
-        'no_reviews',
-      );
-    });
-
-    it('row 2: approvals from others while the team still owes one -> partial', () => {
-      const status = withGroups({ [TEAM]: false });
-      expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('partial');
-    });
-
-    it('row 3: team signed off, count short, nobody else to meet it -> partial', () => {
-      // The team is the only codeowner, so the second approval has to come from
-      // them — they still owe one.
-      const status = withGroups({ [TEAM]: true });
-      expect(computeCodeownerState(makePr('partial', serialise(status)), TEAM)).toBe('partial');
-    });
-
-    it('row 4: team signed off and another group will meet the count -> approved', () => {
-      // This is the upgrade: a single approval, but the team owes nothing more
-      // and frontend's eventual sign-off meets the count.
-      const status = withGroups({ [TEAM]: true, 'frontend-team': false });
-      expect(computeCodeownerState(makePr('partial', serialise(status)), TEAM)).toBe('approved');
-    });
-
-    it('row 5: team signed off and the count is met -> approved', () => {
-      for (const status of [
-        withGroups({ [TEAM]: true }),
-        withGroups({ [TEAM]: true, 'frontend-team': false }),
-        withGroups({ [TEAM]: true, 'frontend-team': true }),
-      ]) {
-        expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('approved');
-      }
-    });
-
-    it('reads an OR group the team belongs to as their own', () => {
-      const status: CodeownerStatus = {
-        requirements: [req([TEAM, 'creator-team'], true)],
-        minimum: null,
-        allSatisfied: true,
-      };
-      expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('approved');
-    });
-
-    it('counts an unsatisfied AND rule even when the team’s OR group is satisfied', () => {
-      const status: CodeownerStatus = {
-        requirements: [req([TEAM], false), req([TEAM, 'creator-team'], true)],
-        minimum: null,
-        allSatisfied: false,
-      };
-      expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe('partial');
-    });
-
-    describe('when the team owns none of the changed files', () => {
-      // All they can still owe is a +1 towards the count, so the count alone
-      // answers it. Another group's outstanding review is not this channel's
-      // question: holding at partial over it would ask for an action nobody in
-      // the room can take.
-      it('reports approved once the count is met, whoever is still outstanding', () => {
-        for (const status of [
-          withGroups({ 'push-service': true }),
-          withGroups({ 'push-service': false }),
-          withGroups({ 'push-service': false, 'frontend-team': false }),
-        ]) {
-          expect(computeCodeownerState(makePr('approved', serialise(status)), TEAM)).toBe(
-            'approved',
-          );
-        }
-      });
-
-      it('asks for the +1 while the count is short', () => {
-        for (const status of [
-          withGroups({ 'push-service': true }),
-          withGroups({ 'push-service': false }),
-        ]) {
-          expect(computeCodeownerState(makePr('partial', serialise(status)), TEAM)).toBe('partial');
-          expect(computeCodeownerState(makePr('no_reviews', serialise(status)), TEAM)).toBe(
-            'no_reviews',
-          );
-        }
-      });
-
-      it('is exactly the approval count, with no codeowner influence at all', () => {
-        const status = withGroups({ 'push-service': false });
-        for (const state of REVIEW_STATES) {
-          expect(computeCodeownerState(makePr(state, serialise(status)), TEAM), state).toBe(state);
-        }
-      });
-    });
-
-    it('leaves the public rule alone for the same statuses', () => {
-      // The private relaxation must not leak: with no team view, an outstanding
-      // group still holds an approved PR back.
-      const status = withGroups({ 'push-service': false });
-      expect(computeCodeownerState(makePr('approved', serialise(status)))).toBe('partial');
-      expect(computeCodeownerState(makePr('partial', serialise(status)))).toBe('partial');
-    });
-
-    it('falls back to the approval count with no codeowner data', () => {
-      for (const state of REVIEW_STATES) {
-        expect(computeCodeownerState(makePr(state, null), TEAM), state).toBe(state);
-        expect(computeCodeownerState(makePr(state, '{not json'), TEAM), state).toBe(state);
-      }
-    });
-
-    it('still defers to terminal and blocking states', () => {
-      const status = withGroups({ [TEAM]: true, 'frontend-team': false });
-      for (const state of PASS_THROUGH) {
-        expect(computeCodeownerState(makePr(state, serialise(status)), TEAM), state).toBe(state);
-      }
-    });
-
-    it('never upgrades without a team view', () => {
-      // The same status that reaches approved for the team must not do so in a
-      // public channel, where other groups are reading.
-      const status = withGroups({ [TEAM]: true, 'frontend-team': false });
-      expect(computeCodeownerState(makePr('partial', serialise(status)))).toBe('partial');
-      expect(computeCodeownerState(makePr('approved', serialise(status)))).toBe('partial');
-    });
+  it('credits a team for an OR requirement another team satisfied', () => {
+    // The bot needs one of the two; once it's met, creator-team owes nothing.
+    const pr = makePr(
+      'no_reviews',
+      status(
+        [
+          { teams: ['design-system-stewards'], satisfied: false },
+          { teams: ['viewer-team', 'creator-team'], satisfied: true },
+        ],
+        null,
+      ),
+    );
+    expect(messageState(pr, 'creator-team')).toBe('team_done');
   });
 
-  describe('invariants', () => {
-    it('never moves a PR that has approvals down to no_reviews', () => {
-      // Codeowner status must not strip a reaction off a message that had one.
-      for (const [name, status] of ALL_STATUSES) {
-        for (const state of ['partial', 'approved'] as const) {
-          expect(computeCodeownerState(makePr(state, serialise(status))), `${state} + ${name}`).not.toBe(
-            'no_reviews',
-          );
-        }
-      }
-    });
+  it('credits a team the bot does not name only through the minimum count', () => {
+    const reqs = [{ teams: ['platform-team'], satisfied: false }];
+    expect(messageState(makePr('no_reviews', status(reqs, null)), 'creator-team')).toBe('no_reviews');
+    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 0, met: false })), 'creator-team')).toBe('no_reviews');
+    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 1, met: false })), 'creator-team')).toBe('partial');
+    expect(messageState(makePr('no_reviews', status(reqs, { required: 2, found: 2, met: true })), 'creator-team')).toBe('team_done');
+  });
 
-    it('never advances a PR beyond the approval count without a team view', () => {
-      for (const [name, status] of ALL_STATUSES) {
-        for (const state of REVIEW_STATES) {
-          const actual = computeCodeownerState(makePr(state, serialise(status)));
-          if (state !== 'approved') {
-            expect(actual, `${state} + ${name}`).not.toBe('approved');
-          }
-        }
-      }
-    });
+  it('matches team slugs case-insensitively', () => {
+    const pr = makePr('no_reviews', status([{ teams: ['Creator-Team'], satisfied: true }], null));
+    expect(messageState(pr, 'creator-team')).toBe('team_done');
   });
 });
 
@@ -502,6 +283,7 @@ describe('managedEmojis', () => {
       'please',
       'request-changes',
       '1of2',
+      'ballot_box_with_check',
       'white_check_mark',
       'merged',
       'x',
@@ -511,6 +293,7 @@ describe('managedEmojis', () => {
       'please',
       'request-changes',
       '1of2',
+      'ballot_box_with_check',
       'white_check_mark',
       'merged',
       'sleeping',

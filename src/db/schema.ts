@@ -11,8 +11,6 @@ export const trackedPrs = sqliteTable(
     repo: text('repo').notNull(),
     number: integer('number').notNull(),
     state: text('state').$type<PrState>().notNull().default('no_reviews'),
-    approvals: integer('approvals').notNull().default(0),
-    requiredApprovals: integer('required_approvals').notNull(),
     lastPolledAt: integer('last_polled_at'),
     createdAt: integer('created_at')
       .notNull()
@@ -60,14 +58,16 @@ export const prMessages = sqliteTable(
  * What we know about the Slack channels we have seen messages in.
  *
  * Privacy is a property of the channel, not of any one message, and it decides
- * which question the reaction answers there — see `computeCodeownerState`. It is
- * kept here rather than on `pr_messages` so that a channel learned from one
- * message applies to every other message in it, including ones discovered
- * through `link_shared`, which carries no `channel_type`.
+ * whether a team view is allowed there — see `messageState`. It is kept here
+ * rather than on `pr_messages` so that a channel learned from one message
+ * applies to every other message in it, including ones discovered through
+ * `link_shared`, which carries no `channel_type`.
  */
 export const slackChannels = sqliteTable('slack_channels', {
   channelId: text('channel_id').primaryKey(),
   isPrivate: integer('is_private', { mode: 'boolean' }).notNull(),
+  /** GitHub team slug set from Slack. Only honoured while the channel is private. */
+  team: text('team'),
   updatedAt: integer('updated_at')
     .notNull()
     .default(sql`(unixepoch() * 1000)`),

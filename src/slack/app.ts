@@ -4,6 +4,7 @@ import type { Store } from '../db/store.js';
 import type { Logger } from '../logger.js';
 import type { PrService } from '../pr-service.js';
 import { parsePrLinks } from './parse-pr-links.js';
+import { parseSetupCommand } from './parse-setup-command.js';
 
 export interface SlackAppDeps {
   config: Config;
@@ -52,6 +53,20 @@ function extractMessage(event: Record<string, unknown>): { ts: string; text: str
 }
 
 /**
+ * Whether a message event came from a private channel, from the `channel_type`
+ * Slack puts on every message event. Null when it's missing or unfamiliar;
+ * callers treat that like public, the strict case.
+ */
+function channelIsPrivate(channelType: unknown): boolean | null {
+  if (channelType === 'group' || channelType === 'mpim') return true;
+  if (channelType === 'channel') return false;
+  return null;
+}
+
+/** Reactions the bot uses to answer a setup message. Never on PR messages. */
+const SETUP_REPLY = { saved: 'ok_hand', public_channel: 'no_entry', invalid: 'question' } as const;
+
+/**
  * The Slack side of the bot: a Socket Mode connection (no inbound HTTP, no public
  * URL, no request signing) that turns GitHub PR links into tracked PRs.
  */
@@ -85,47 +100,71 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   });
 
   /**
-   * Fallback signal. Slack suppresses link_shared for URLs recently unfurled in
-   * the same channel, so scanning message text catches re-posts reliably. Both
-   * paths are idempotent upserts so overlap is harmless.
+   * Every message in a channel the bot is in. Four jobs:
+   * - Record whether the channel is private (only message events say).
+   * - Untrack a deleted message.
+   * - Handle a channel setup message ("@CB PR Status team creator-team").
+   * - When ENABLE_MESSAGE_SCAN is on, track PR links in the text. Slack
+   *   suppresses link_shared for URLs recently unfurled in the same channel, so
+   *   scanning text catches re-posts. Both paths are idempotent upserts, so
+   *   overlap with link_shared is harmless.
    */
-  if (config.enableMessageScan) {
-    app.event('message', async ({ event }) => {
-      const raw = event as unknown as Record<string, unknown>;
-      if (typeof raw.channel !== 'string') return;
+  app.event('message', async ({ event, context, client }) => {
+    const raw = event as unknown as Record<string, unknown>;
+    const channel = raw.channel;
+    if (typeof channel !== 'string') return;
 
-      // Slack stamps this on every message event: 'channel' for a public
-      // channel, 'group' for a private one. It is the only place we learn it —
-      // `link_shared` carries no channel_type — so record it whenever we see a
-      // message here, even one with no PR link in it.
-      if (raw.channel_type === 'channel' || raw.channel_type === 'group') {
-        store.setChannelPrivacy(raw.channel, raw.channel_type === 'group');
-      }
+    // The only place we learn whether a channel is private — `link_shared`
+    // carries no channel_type — so record it on every message, even one with no
+    // PR link in it.
+    const isPrivate = channelIsPrivate(raw.channel_type);
+    if (isPrivate !== null) store.setChannelPrivacy(channel, isPrivate);
 
-      if (raw.subtype === 'message_deleted') {
-        const previous = raw.previous_message as Record<string, unknown> | undefined;
-        const ts = previous?.ts;
-        if (typeof ts === 'string' && typeof raw.channel === 'string') {
-          const dropped = store.deleteMessagesByTs(raw.channel, ts);
-          if (dropped > 0) {
-            logger.info({ channel: raw.channel, messageTs: ts, dropped }, 'message deleted, untracked');
-          }
+    if (raw.subtype === 'message_deleted') {
+      const previous = raw.previous_message as Record<string, unknown> | undefined;
+      const ts = previous?.ts;
+      if (typeof ts === 'string') {
+        const dropped = store.deleteMessagesByTs(channel, ts);
+        if (dropped > 0) {
+          logger.info({ channel, messageTs: ts, dropped }, 'message deleted, untracked');
         }
-        return;
       }
+      return;
+    }
 
-      const message = extractMessage(raw);
-      if (!message) return;
+    const message = extractMessage(raw);
+    if (!message) return;
 
-      const refs = parsePrLinks(message.text);
-      logger.debug(
-        { channel: raw.channel, messageTs: message.ts, prCount: refs.length },
-        'message received',
-      );
-      if (refs.length === 0) return;
-      await service.trackLinks(raw.channel as string, message.ts, refs);
-    });
-  }
+    // Only a freshly posted message counts as setup; an edit or another bot
+    // repeating the words does not.
+    const command =
+      raw.subtype === undefined && context.botUserId
+        ? parseSetupCommand(message.text, context.botUserId)
+        : null;
+    if (command) {
+      let outcome: keyof typeof SETUP_REPLY;
+      if (command.kind === 'invalid') {
+        outcome = 'invalid';
+      } else if (isPrivate === null) {
+        outcome = 'public_channel';
+      } else {
+        outcome = await service.setChannelTeam(channel, isPrivate, command.team);
+      }
+      logger.info({ channel, messageTs: message.ts, command, outcome }, 'setup message handled');
+      try {
+        await client.reactions.add({ channel, timestamp: message.ts, name: SETUP_REPLY[outcome] });
+      } catch (error) {
+        logger.warn({ err: error, channel }, 'could not react to setup message');
+      }
+      return;
+    }
+
+    const refs = parsePrLinks(message.text);
+    logger.debug({ channel, messageTs: message.ts, prCount: refs.length }, 'message received');
+    if (refs.length === 0) return;
+
+    if (config.enableMessageScan) await service.trackLinks(channel, message.ts, refs);
+  });
 
   app.error(async (error) => {
     logger.error({ err: error }, 'bolt listener error');

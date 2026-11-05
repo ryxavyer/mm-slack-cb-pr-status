@@ -21,14 +21,14 @@ describe('Reconciler', () => {
     ({ store, handle } = testStore());
     reactions = new FakeReactionClient();
     reconciler = new Reconciler(store, reactions, emoji, testLogger);
-    pr = store.upsertPr(ref, 2);
+    pr = store.upsertPr(ref);
   });
 
   afterEach(() => handle.close());
 
   /** Puts the PR into `state` and returns the row, as the poller would. */
   const setState = (state: PrState): TrackedPr => {
-    const updated = store.recordPoll(pr.id, { state, approvals: 0, requiredApprovals: 2 });
+    const updated = store.recordPoll(pr.id, { state });
     if (!updated) throw new Error('missing pr');
     return updated;
   };
@@ -245,228 +245,46 @@ describe('Reconciler', () => {
     expect(reactions.calls).toEqual([]);
   });
 
-  describe('codeowner review groups', () => {
-    /** Puts the PR at `state` with a codeowner status naming each team. */
-    function setPr(state: PrState, teamStatuses: Record<string, boolean>): void {
-      const requirements = Object.entries(teamStatuses).map(([team, satisfied]) => ({
-        teams: [team],
-        satisfied,
-      }));
-      const allSatisfied = requirements.length > 0 && requirements.every((r) => r.satisfied);
+  describe('channel team', () => {
+    /** creator-team has done its part; platform-team and the PR as a whole have not. */
+    const teamDone = (): TrackedPr => {
       const updated = store.recordPoll(pr.id, {
-        state,
-        approvals: state === 'approved' ? 2 : state === 'partial' ? 1 : 0,
-        requiredApprovals: 2,
-        codeownerStatus: JSON.stringify({ requirements, minimum: null, allSatisfied }),
-      });
-      if (!updated) throw new Error('missing pr');
-    }
-
-    const added = () => reactions.calls.find((c) => c.op === 'add')?.name ?? null;
-
-    it('shows approved when every group has signed off', async () => {
-      store.linkMessage(pr.id, 'C1', '111.1');
-      setPr('approved', { 'creator-team': true, 'platform-team': true });
-
-      await reconciler.reconcileMessage('C1', '111.1');
-      expect(added()).toBe('white_check_mark');
-    });
-
-    it('holds at partial while any group is still pending', async () => {
-      store.linkMessage(pr.id, 'C1', '111.1');
-      setPr('approved', { 'creator-team': true, 'platform-team': false });
-
-      const summary = await reconciler.reconcileMessage('C1', '111.1');
-      expect(added()).toBe('1of2');
-      expect(summary.added).toBe(1);
-    });
-
-    it('marks an unreviewed PR as awaiting the group', async () => {
-      store.linkMessage(pr.id, 'C1', '111.1');
-      setPr('no_reviews', { 'creator-team': false });
-
-      const summary = await reconciler.reconcileMessage('C1', '111.1');
-      expect(added()).toBe('please');
-      expect(summary.added).toBe(1);
-    });
-
-    it('applies the same rule in every channel', async () => {
-      // The channel a message is in no longer changes the answer.
-      store.linkMessage(pr.id, 'C1', '111.1');
-      store.linkMessage(pr.id, 'C2', '222.2');
-      setPr('approved', { 'creator-team': false });
-
-      await reconciler.reconcileMessage('C1', '111.1');
-      await reconciler.reconcileMessage('C2', '222.2');
-
-      expect(reactions.calls.filter((c) => c.op === 'add').map((c) => c.name)).toEqual([
-        '1of2',
-        '1of2',
-      ]);
-    });
-
-    it('falls back to the approval count with no codeowner data', async () => {
-      store.linkMessage(pr.id, 'C1', '111.1');
-      setState('partial');
-
-      const summary = await reconciler.reconcileMessage('C1', '111.1');
-      expect(added()).toBe('1of2');
-      expect(summary.added).toBe(1);
-    });
-
-    it('releases the hold once the last group signs off', async () => {
-      store.linkMessage(pr.id, 'C1', '111.1');
-      setPr('approved', { 'creator-team': false });
-      await reconciler.reconcileMessage('C1', '111.1');
-      reactions.calls.length = 0;
-
-      setPr('approved', { 'creator-team': true });
-      await reconciler.reconcileMessage('C1', '111.1');
-
-      expect(reactions.calls.map((c) => [c.op, c.name])).toEqual([
-        ['remove', '1of2'],
-        ['add', 'white_check_mark'],
-      ]);
-    });
-  });
-
-  describe('the team view in a private channel', () => {
-    // The whole point of gating on privacy: a private channel has one team in
-    // it, so its sign-off can speak for the room. A public channel has several,
-    // so it cannot.
-    const TEAM = 'monetization-team';
-    const teamMap = {
-      botLogin: 'mmllc-gh',
-      channels: new Map([['C_TEAM', TEAM]]),
-    };
-
-    let aware: Reconciler;
-
-    beforeEach(() => {
-      aware = new Reconciler(store, reactions, emoji, testLogger, teamMap);
-    });
-
-    /** One approval, the team signed off, another group still outstanding. */
-    const setPr = () => {
-      const updated = store.recordPoll(pr.id, {
-        state: 'partial',
-        approvals: 1,
-        requiredApprovals: 2,
+        state: 'no_reviews',
         codeownerStatus: JSON.stringify({
           requirements: [
-            { teams: [TEAM], satisfied: true },
-            { teams: ['frontend-team'], satisfied: false },
+            { teams: ['creator-team'], satisfied: true },
+            { teams: ['platform-team'], satisfied: false },
           ],
-          minimum: null,
+          minimum: { required: 2, found: 2, met: true },
           allSatisfied: false,
         }),
       });
       if (!updated) throw new Error('missing pr');
+      return updated;
     };
 
-    const added = () => reactions.calls.find((c) => c.op === 'add')?.name ?? null;
-
-    it('upgrades in a private channel mapped to the team', async () => {
-      store.linkMessage(pr.id, 'C_TEAM', '111.1');
-      store.setChannelPrivacy('C_TEAM', true);
-      setPr();
-
-      await aware.reconcileMessage('C_TEAM', '111.1');
-      expect(added()).toBe('white_check_mark');
-    });
-
-    it('does not upgrade in the same channel when it is public', async () => {
-      store.linkMessage(pr.id, 'C_TEAM', '111.1');
-      store.setChannelPrivacy('C_TEAM', false);
-      setPr();
-
-      await aware.reconcileMessage('C_TEAM', '111.1');
-      expect(added()).toBe('1of2');
-    });
-
-    it('does not upgrade while the channel privacy is still unknown', async () => {
-      // link_shared carries no channel_type, so a message can be tracked before
-      // we know. Defaulting to the public rule never overclaims.
-      store.linkMessage(pr.id, 'C_TEAM', '111.1');
-      setPr();
-
-      await aware.reconcileMessage('C_TEAM', '111.1');
-      expect(added()).toBe('1of2');
-    });
-
-    it('does not upgrade in a private channel the team map does not name', async () => {
-      store.linkMessage(pr.id, 'C_OTHER', '111.1');
-      store.setChannelPrivacy('C_OTHER', true);
-      setPr();
-
-      await aware.reconcileMessage('C_OTHER', '111.1');
-      expect(added()).toBe('1of2');
-    });
-
-    it('does not upgrade when no team map is configured at all', async () => {
-      store.linkMessage(pr.id, 'C_TEAM', '111.1');
-      store.setChannelPrivacy('C_TEAM', true);
-      setPr();
-
-      // `reconciler` is built without a team map.
-      await reconciler.reconcileMessage('C_TEAM', '111.1');
-      expect(added()).toBe('1of2');
-    });
-
-    it('still holds back in the team channel while that team owes a review', async () => {
-      store.linkMessage(pr.id, 'C_TEAM', '111.1');
-      store.setChannelPrivacy('C_TEAM', true);
-      store.recordPoll(pr.id, {
-        state: 'approved',
-        approvals: 2,
-        requiredApprovals: 2,
-        codeownerStatus: JSON.stringify({
-          requirements: [{ teams: [TEAM], satisfied: false }],
-          minimum: null,
-          allSatisfied: false,
-        }),
-      });
-
-      await aware.reconcileMessage('C_TEAM', '111.1');
-      expect(added()).toBe('1of2');
-    });
-
-    it('carries a different emoji for the same PR in each channel', async () => {
-      // The same PR posted in both places reads differently, which is the point.
-      store.linkMessage(pr.id, 'C_TEAM', '111.1');
-      store.linkMessage(pr.id, 'C_PUBLIC', '222.2');
-      store.setChannelPrivacy('C_TEAM', true);
-      store.setChannelPrivacy('C_PUBLIC', false);
-      setPr();
-
-      await aware.reconcilePr(store.getPr(pr.id)!);
-
-      expect(
-        reactions.calls.filter((c) => c.op === 'add').map((c) => `${c.channel}:${c.name}`),
-      ).toEqual(['C_TEAM:white_check_mark', 'C_PUBLIC:1of2']);
-    });
-  });
-
-  describe('aggregating several PRs on one message', () => {
-    it('lets awaiting_codeowners outrank a partly reviewed PR', async () => {
-      const other = store.upsertPr({ owner: 'acme', repo: 'monolith', number: 43 }, 2);
+    it('shows team progress in a private channel set to that team', async () => {
+      store.setChannelTeam('C1', true, 'creator-team');
       store.linkMessage(pr.id, 'C1', '111.1');
-      store.linkMessage(other.id, 'C1', '111.1');
 
-      store.recordPoll(pr.id, {
-        state: 'no_reviews',
-        approvals: 0,
-        requiredApprovals: 2,
-        codeownerStatus: JSON.stringify({
-          requirements: [{ teams: ['creator-team'], satisfied: false }],
-          minimum: null,
-          allSatisfied: false,
-        }),
-      });
-      store.recordPoll(other.id, { state: 'partial', approvals: 1, requiredApprovals: 2 });
+      await reconciler.reconcilePr(teamDone());
+      expect(reactions.calls.map((c) => c.name)).toEqual(['ballot_box_with_check']);
+    });
 
-      await reconciler.reconcileMessage('C1', '111.1');
-      expect(reactions.calls.find((c) => c.op === 'add')?.name).toBe('please');
+    it('asks another team still pending for its review', async () => {
+      store.setChannelTeam('C1', true, 'platform-team');
+      store.linkMessage(pr.id, 'C1', '111.1');
+
+      await reconciler.reconcilePr(teamDone());
+      expect(reactions.calls.map((c) => c.name)).toEqual(['please']);
+    });
+
+    it('ignores the team in a public channel', async () => {
+      store.setChannelTeam('C1', false, 'creator-team');
+      store.linkMessage(pr.id, 'C1', '111.1');
+
+      await reconciler.reconcilePr(teamDone());
+      expect(reactions.calls.map((c) => c.name)).toEqual(['please']);
     });
   });
 });
