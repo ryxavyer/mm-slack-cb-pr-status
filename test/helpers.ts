@@ -92,6 +92,9 @@ export class FakeReactionClient implements ReactionClient {
 /** A GitHubClient backed by an in-memory map of PR statuses. */
 export class FakeGitHubClient implements GitHubClient {
   readonly requests: string[] = [];
+  /** The logins passed along with each request, to check the service names the codeowner bot. */
+  readonly ignoredReviewers: (readonly string[])[] = [];
+  readonly botLogins: string[] = [];
   private statuses = new Map<string, PrStatus>();
   private errors = new Map<string, Error>();
   private codeownerStatuses = new Map<string, CodeownerStatus | null>();
@@ -123,9 +126,10 @@ export class FakeGitHubClient implements GitHubClient {
     this.errors.delete(FakeGitHubClient.key(ref));
   }
 
-  async fetchPrStatus(ref: PrRef): Promise<PrStatus> {
+  async fetchPrStatus(ref: PrRef, ignoreReviewers: readonly string[] = []): Promise<PrStatus> {
     const key = FakeGitHubClient.key(ref);
     this.requests.push(key);
+    this.ignoredReviewers.push(ignoreReviewers);
     const error = this.errors.get(key);
     if (error) throw error;
     const status = this.statuses.get(key);
@@ -133,7 +137,8 @@ export class FakeGitHubClient implements GitHubClient {
     return status;
   }
 
-  async fetchCodeownerStatus(ref: PrRef, _botLogin: string): Promise<CodeownerStatus | null> {
+  async fetchCodeownerStatus(ref: PrRef, botLogin: string): Promise<CodeownerStatus | null> {
+    this.botLogins.push(botLogin);
     return this.codeownerStatuses.get(FakeGitHubClient.key(ref)) ?? null;
   }
 }

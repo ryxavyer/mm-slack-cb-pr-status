@@ -378,6 +378,17 @@ describe('PrService', () => {
       expect(reactions.calls).toEqual([]);
     });
 
+    it('reads only the configured codeowner bot, and does not count its reviews as someone looking', async () => {
+      build({ codeownerBotLogin: 'review-bot' });
+      stage(ref, 'waiting');
+      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.runCycle();
+
+      expect(github.botLogins.length).toBeGreaterThan(0);
+      expect(new Set(github.botLogins)).toEqual(new Set(['review-bot']));
+      expect(github.ignoredReviewers.every((logins) => logins.includes('review-bot'))).toBe(true);
+    });
+
     it('counts a codeowner progress change as a change even when the PR state holds', async () => {
       stage(ref, 'waiting');
       await service.trackLinks(TEAM, '111.1', [ref]);
