@@ -210,29 +210,19 @@ describe('Store', () => {
   });
 
   describe('channel settings', () => {
-    it('has no team for a channel it has never seen', () => {
+    it('has no team for a channel nobody has set up', () => {
       expect(store.channelTeam('C1')).toBeNull();
     });
 
-    it('honours a team only while the channel is private', () => {
-      store.setChannelTeam('C1', true, 'creator-team');
+    it('sets, replaces and clears a channel’s team', () => {
+      store.setChannelTeam('C1', 'creator-team');
       expect(store.channelTeam('C1')).toBe('creator-team');
+      expect(store.channelTeam('C2')).toBeNull();
 
-      // Converted to public: the setting stays on file but stops applying.
-      store.setChannelPrivacy('C1', false);
-      expect(store.channelTeam('C1')).toBeNull();
+      store.setChannelTeam('C1', 'platform-team');
+      expect(store.channelTeam('C1')).toBe('platform-team');
 
-      store.setChannelPrivacy('C1', true);
-      expect(store.channelTeam('C1')).toBe('creator-team');
-    });
-
-    it('keeps the team when the channel type is recorded again, and clears it on request', () => {
-      store.setChannelPrivacy('C1', true);
-      store.setChannelTeam('C1', true, 'creator-team');
-      store.setChannelPrivacy('C1', true);
-      expect(store.channelTeam('C1')).toBe('creator-team');
-
-      store.setChannelTeam('C1', true, null);
+      store.setChannelTeam('C1', null);
       expect(store.channelTeam('C1')).toBeNull();
     });
 

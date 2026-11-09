@@ -9,8 +9,8 @@ import { computeState, emojiForState, messageState } from '../src/state.js';
  * bot's comment says, and what that means for a message in a given channel.
  *
  * The comment bodies here are the real shapes mmllc-gh posts. `team` is null
- * for a public channel (or a private one with no team set), and the team slug
- * for a private channel set to that team.
+ * for a channel with no team set, and the team slug for a channel set to that
+ * team.
  */
 
 const emoji: EmojiConfig = {
@@ -71,9 +71,14 @@ describe('codeowner comment -> Slack reaction', () => {
       expect(reactionFor(body, 'media-library-experts', { reviewed: false })).toBe('please');
     });
 
-    it('goes quiet once someone has reviewed, in any channel', () => {
+    it('goes quiet once someone has reviewed, but keeps asking the team that owes it', () => {
       expect(reactionFor(body)).toBeNull();
-      expect(reactionFor(body, 'media-library-experts')).toBeNull();
+      expect(reactionFor(body, 'media-library-experts')).toBe('please');
+    });
+
+    it('goes quiet for a team the bot does not name', () => {
+      expect(reactionFor(body, 'creator-team')).toBeNull();
+      expect(reactionFor(body, 'creator-team', { reviewed: false })).toBe('please');
     });
 
     it('still defers to merged, closed and blocking states', () => {
@@ -91,13 +96,13 @@ describe('codeowner comment -> Slack reaction', () => {
       '<details><summary>Show detailed file reviewers</summary></details>',
     ].join('\n');
 
-    it('holds a public channel back until every group has signed off', () => {
+    it('holds a channel with no team back until every group has signed off', () => {
       expect(reactionFor(body)).toBeNull();
     });
 
-    it('tells the team that signed off it is done', () => {
+    it('tells the team that signed off it is done, and asks the team that has not', () => {
       expect(reactionFor(body, 'messaging-pod')).toBe('blue_check_mark');
-      expect(reactionFor(body, 'creator-team')).toBeNull();
+      expect(reactionFor(body, 'creator-team')).toBe('please');
     });
   });
 
@@ -139,13 +144,13 @@ describe('codeowner comment -> Slack reaction', () => {
       '<details><summary>Show detailed file reviewers</summary></details>',
     ].join('\n');
 
-    it('still counts the outstanding AND rules in public', () => {
+    it('still counts the outstanding AND rules without a team', () => {
       expect(reactionFor(body)).toBeNull();
     });
 
-    it('credits the OR group’s other team, but not a team with its own rule pending', () => {
+    it('credits the OR group’s other team, but asks a team with its own rule pending', () => {
       expect(reactionFor(body, 'creator-team')).toBe('blue_check_mark');
-      expect(reactionFor(body, 'viewer-team')).toBeNull();
+      expect(reactionFor(body, 'viewer-team')).toBe('please');
     });
   });
 
@@ -156,12 +161,37 @@ describe('codeowner comment -> Slack reaction', () => {
       '- Minimum review requirement not met. Need 2 reviews, found 1.',
     ].join('\n');
 
-    it('holds a public channel back until the minimum is met', () => {
+    it('holds a channel with no team back until the minimum is met', () => {
       expect(reactionFor(body)).toBeNull();
     });
 
     it('shows one of two in the team’s own channel', () => {
       expect(reactionFor(body, 'viewer-team')).toBe('1of2');
+    });
+
+    it('shows team done instead while another group is still owed, since its review covers the count', () => {
+      const withOther = [
+        'Codeowners approval required for this PR:',
+        '- ✅ @multimediallc/viewer-team',
+        '- @multimediallc/platform-team',
+        '- Minimum review requirement not met. Need 2 reviews, found 1.',
+      ].join('\n');
+
+      expect(reactionFor(withOther, 'viewer-team')).toBe('blue_check_mark');
+      expect(reactionFor(withOther, 'platform-team')).toBe('please');
+      expect(reactionFor(withOther)).toBeNull();
+    });
+
+    it('shows one of two when one reviewer in both teams satisfied every group', () => {
+      const bothTicked = [
+        'Codeowners approval required for this PR:',
+        '- ✅ @multimediallc/viewer-team',
+        '- ✅ @multimediallc/platform-team',
+        '- Minimum review requirement not met. Need 2 reviews, found 1.',
+      ].join('\n');
+
+      expect(reactionFor(bothTicked, 'viewer-team')).toBe('1of2');
+      expect(reactionFor(bothTicked, 'platform-team')).toBe('1of2');
     });
   });
 

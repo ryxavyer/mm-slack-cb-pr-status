@@ -86,9 +86,7 @@ export class Reconciler {
   ): Promise<ReconcileSummary> {
     const summary = emptySummary();
     const prs = this.store.prsForMessage(channelId, messageTs);
-    // Only a private channel set to a team gets a team view: privacy is the
-    // proxy for audience. A public channel is read by several teams, so one
-    // team's sign-off must not speak for the rest.
+    // A channel set to a team shows that team's part in each PR; see messageState.
     const teamSlug = this.store.channelTeam(channelId);
     const state = aggregateState(prs.map((p) => messageState(p, teamSlug)));
     const target = state ? emojiForState(state, this.emoji) : null;

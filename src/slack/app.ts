@@ -52,19 +52,8 @@ function extractMessage(event: Record<string, unknown>): { ts: string; text: str
   return null;
 }
 
-/**
- * Whether a message event came from a private channel, from the `channel_type`
- * Slack puts on every message event. Null when it's missing or unfamiliar;
- * callers treat that like public, the strict case.
- */
-function channelIsPrivate(channelType: unknown): boolean | null {
-  if (channelType === 'group' || channelType === 'mpim') return true;
-  if (channelType === 'channel') return false;
-  return null;
-}
-
 /** Reactions the bot uses to answer a setup message. Never on PR messages. */
-const SETUP_REPLY = { saved: 'ok_hand', public_channel: 'no_entry', invalid: 'question' } as const;
+const SETUP_REPLY = { saved: 'ok_hand', invalid: 'question' } as const;
 
 /**
  * The Slack side of the bot: a Socket Mode connection (no inbound HTTP, no public
@@ -100,8 +89,7 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
   });
 
   /**
-   * Every message in a channel the bot is in. Four jobs:
-   * - Record whether the channel is private (only message events say).
+   * Every message in a channel the bot is in. Three jobs:
    * - Untrack a deleted message.
    * - Handle a channel setup message ("@CB PR Status team creator-team").
    * - When ENABLE_MESSAGE_SCAN is on, track PR links in the text. Slack
@@ -113,12 +101,6 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
     const raw = event as unknown as Record<string, unknown>;
     const channel = raw.channel;
     if (typeof channel !== 'string') return;
-
-    // The only place we learn whether a channel is private — `link_shared`
-    // carries no channel_type — so record it on every message, even one with no
-    // PR link in it.
-    const isPrivate = channelIsPrivate(raw.channel_type);
-    if (isPrivate !== null) store.setChannelPrivacy(channel, isPrivate);
 
     if (raw.subtype === 'message_deleted') {
       const previous = raw.previous_message as Record<string, unknown> | undefined;
@@ -142,13 +124,10 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
         ? parseSetupCommand(message.text, context.botUserId)
         : null;
     if (command) {
-      let outcome: keyof typeof SETUP_REPLY;
-      if (command.kind === 'invalid') {
-        outcome = 'invalid';
-      } else if (isPrivate === null) {
-        outcome = 'public_channel';
-      } else {
-        outcome = await service.setChannelTeam(channel, isPrivate, command.team);
+      let outcome: keyof typeof SETUP_REPLY = 'invalid';
+      if (command.kind === 'set_team') {
+        await service.setChannelTeam(channel, command.team);
+        outcome = 'saved';
       }
       logger.info({ channel, messageTs: message.ts, command, outcome }, 'setup message handled');
       try {

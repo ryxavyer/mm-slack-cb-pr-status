@@ -76,20 +76,12 @@ export class PrService {
   }
 
   /**
-   * Sets (or clears, with null) the GitHub team a private channel represents,
-   * then re-reconciles the messages already tracked there so the change shows
-   * straight away. Refused for a public channel, where anyone can tag any team.
+   * Sets (or clears, with null) the GitHub team a channel represents, then
+   * re-reconciles the messages already tracked there so the change shows
+   * straight away.
    */
-  async setChannelTeam(
-    channelId: string,
-    isPrivate: boolean,
-    team: string | null,
-  ): Promise<'saved' | 'public_channel'> {
-    if (!isPrivate) {
-      this.store.setChannelPrivacy(channelId, false);
-      return 'public_channel';
-    }
-    this.store.setChannelTeam(channelId, true, team);
+  async setChannelTeam(channelId: string, team: string | null): Promise<void> {
+    this.store.setChannelTeam(channelId, team);
     this.logger.info({ channel: channelId, team }, 'channel team updated');
 
     for (const messageTs of this.store.messageTsInChannel(channelId)) {
@@ -101,7 +93,6 @@ export class PrService {
           .error({ err: error }, 'failed to reconcile message after channel team change');
       }
     }
-    return 'saved';
   }
 
   /** An empty `WATCHED_REPOS` allows every repo the GitHub token can see. */

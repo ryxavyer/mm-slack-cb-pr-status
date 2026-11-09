@@ -4,12 +4,13 @@
  * access, repo gone), so the last state we computed can no longer be trusted.
  *
  * `no_reviews` is a PR nobody has reviewed yet; `in_review` is one somebody
- * has, that the codeowner bot isn't satisfied with yet.
+ * has, that the codeowner bot isn't satisfied with yet. In a channel set to a
+ * team, a message also shows `no_reviews` while that team is still needed.
  *
- * `partial` and `team_done` only ever describe a PR as seen from a private
- * channel set to a team; they are never stored on the PR itself. Everywhere
- * else a PR is either unreviewed, in review, blocked, approved by the codeowner
- * bot, or finished.
+ * `partial` and `team_done` only ever describe a PR as seen from a channel set
+ * to a team; they are never stored on the PR itself. Everywhere else a PR is
+ * either unreviewed, in review, blocked, approved by the codeowner bot, or
+ * finished.
  */
 export const PR_STATES = [
   'no_reviews',

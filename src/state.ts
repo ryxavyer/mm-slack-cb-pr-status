@@ -1,6 +1,6 @@
 import type { EmojiConfig } from './config.js';
 import type { TrackedPr } from './db/schema.js';
-import type { CodeownerStatus, PrState } from './types.js';
+import type { CodeownerRequirement, CodeownerStatus, PrState } from './types.js';
 
 export interface StateInput {
   merged: boolean;
@@ -40,26 +40,29 @@ export function computeState({
 }
 
 /**
- * The state a PR shows on one message, given the GitHub team of the private
- * channel it was posted in (null everywhere else).
+ * The state a PR shows on one message, given the GitHub team of the channel it
+ * was posted in (null for a channel with no team set).
  *
- * Without a team this is just the PR's own state, so public channels only ever
- * see "unreviewed", "in review", "blocked", "approved by the codeowner bot" or
- * "finished".
+ * Without a team this is just the PR's own state: "unreviewed", "in review",
+ * "blocked", "approved by the codeowner bot" or "finished".
  *
- * With a team, a PR in review can show progress for that team:
- *   - `team_done` when every requirement naming the team is satisfied and the
- *     bot's minimum review count is met — the bot needs nothing more from the
- *     team, though other code owners are still pending.
- *   - `partial` when the team's requirements are satisfied but the bot reports
- *     exactly one of two required reviews, so `1of2` means literally that.
+ * With a team, a PR still waiting on reviews shows that team's part in it, as
+ * the codeowner bot reports it:
+ *   - `no_reviews` while any requirement naming the team is unsatisfied, even
+ *     after other people have reviewed: the team is still needed.
+ *   - `team_done` once the team's requirements are satisfied and another
+ *     requirement is still open. Those other code owners' reviews will also
+ *     cover the bot's review minimum, so nothing more is needed from the team.
+ *   - `partial` once the team's requirements are satisfied, nothing else is
+ *     open, and the bot reports exactly one of two required reviews: the one
+ *     review still missing naturally falls to the team.
  *
- * A team the bot doesn't name only gets credit through the minimum count, so a
- * PR that touches none of its files never shows `team_done` before anyone has
- * reviewed it.
+ * A team the bot doesn't name gets the plain view. The bot says nothing about
+ * that team, and we don't guess.
  */
 export function messageState(pr: TrackedPr, team: string | null): PrState {
-  if (pr.state !== 'in_review' || team === null || !pr.codeownerStatus) return pr.state;
+  const waiting = pr.state === 'no_reviews' || pr.state === 'in_review';
+  if (!waiting || team === null || !pr.codeownerStatus) return pr.state;
 
   let status: CodeownerStatus;
   try {
@@ -69,13 +72,15 @@ export function messageState(pr: TrackedPr, team: string | null): PrState {
   }
 
   const slug = team.toLowerCase();
-  const teamReqs = status.requirements.filter((r) => r.teams.some((t) => t.toLowerCase() === slug));
-  if (!teamReqs.every((r) => r.satisfied)) return 'in_review';
+  const names = (r: CodeownerRequirement) => r.teams.some((t) => t.toLowerCase() === slug);
+  const teamReqs = status.requirements.filter(names);
+  if (teamReqs.length === 0) return pr.state;
+  if (teamReqs.some((r) => !r.satisfied)) return 'no_reviews';
 
+  // Every requirement naming the team is satisfied, so any open one is someone else's.
+  if (status.requirements.some((r) => !r.satisfied)) return 'team_done';
   const { minimum } = status;
-  if (minimum === null) return teamReqs.length > 0 ? 'team_done' : 'in_review';
-  if (minimum.met) return 'team_done';
-  if (minimum.required === 2 && minimum.found === 1) return 'partial';
+  if (minimum?.required === 2 && minimum.found === 1) return 'partial';
   return 'in_review';
 }
 
@@ -95,7 +100,8 @@ export function isTerminal(state: PrState): boolean {
  *
  * A Slack reaction belongs to the message, not to any one PR, so a message with
  * two PR links gets one emoji answering "what does this message need?". If
- * either PR is unreviewed, it needs eyes — so `no_reviews` beats `approved`.
+ * either PR is unreviewed, it needs eyes — so `no_reviews` beats `approved`. In a
+ * channel set to a team, `no_reviews` also means "the team is still needed".
  *
  * `unknown` outranks everything: if we can't see one of the PRs, we must not
  * claim the message as a whole is approved or merged. `changes_requested` comes

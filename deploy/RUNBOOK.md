@@ -30,17 +30,17 @@ Create the app from [slack-manifest.yml](../slack-manifest.yml) — api.slack.co
    gives you `SLACK_BOT_TOKEN` (`xoxb-…`).
 3. `/invite @CB PR Status` in each channel you want watched. The bot ignores
    every channel it isn't in.
-4. In a private team channel that should see its team's progress, post
-   `@CB PR Status team <github-team-slug>` (see [README.md](../README.md)).
-   Public channels need no setup.
+4. In a team channel that should see its team's progress, public or private,
+   post `@CB PR Status team <github-team-slug>` (see [README.md](../README.md)).
+   Other channels need no setup.
 5. Create the custom `:merged:` and `:please:` emoji if the workspace doesn't
    have them — or point `EMOJI_MERGED` / `EMOJI_NO_REVIEWS` at ones that exist.
 
 Two notes on the manifest's scopes. `github.com` must stay in `unfurl_domains`
 or Slack never delivers `link_shared`. And keep `channels:history` /
 `groups:history` with their `message.*` events even with
-`ENABLE_MESSAGE_SCAN=false`: message events are the only way the bot learns
-whether a channel is private, and they carry the team setup messages.
+`ENABLE_MESSAGE_SCAN=false`: message events carry the team setup messages and
+tell the bot when a tracked message is deleted.
 
 ### 2. GitHub token
 
@@ -136,9 +136,8 @@ journalctl -u mm-slack-cb-pr-status -f -o cat | jq .
 
 End-to-end smoke test: post a link to an open PR in a watched channel. Within a
 few seconds the log should show `tracking pr link`, and the message should carry
-the right emoji (none until the codeowner bot is satisfied — or, in a private
-channel set to a team, until that team has reviewed — then within one poll
-interval).
+the right emoji for its stage (see the table in [README.md](../README.md)), and
+follow the PR through review within one poll interval.
 
 ## Backup and restore
 
@@ -198,7 +197,7 @@ its reactions and stops tracking those PRs.
 | ------- | ------------ |
 | No emoji ever appears | The bot was never `/invite`d into the channel |
 | PRs never get `:white_check_mark:` | The codeowner bot hasn't commented on them (its comment is the only approval signal), or `CODEOWNER_BOT_LOGIN` doesn't match its GitHub login |
-| A private team channel shows no team progress | The team was never set (`@CB PR Status team <slug>`), the slug doesn't match the GitHub team name in the codeowner bot's comment, or the channel was converted to public |
+| A team channel shows no team progress | The team was never set (`@CB PR Status team <slug>`), the slug doesn't match the team name in the codeowner bot's comment, or the team isn't a code owner on that PR (the bot doesn't name it) |
 | `emoji does not exist in this workspace` | `EMOJI_MERGED` names a custom emoji that hasn't been created |
 | Every PR shows `:sleeping:` | `GITHUB_TOKEN` expired, was revoked, lost repo access, or isn't SSO-authorised. Look for `pr unreachable on github` lines — they carry the `reason` and HTTP `status`. Fix the token and the emoji correct themselves on the next poll; no restart needed |
 | `poll cycle complete` with `failed > 0` | Transient GitHub errors; check the `poll failed for pr` lines |

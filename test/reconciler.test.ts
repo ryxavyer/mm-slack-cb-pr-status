@@ -263,29 +263,29 @@ describe('Reconciler', () => {
       return updated;
     };
 
-    it('shows team progress in a private channel set to that team', async () => {
-      store.setChannelTeam('C1', true, 'creator-team');
+    it('shows team progress in a channel set to that team', async () => {
+      store.setChannelTeam('C1', 'creator-team');
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());
       expect(reactions.calls.map((c) => c.name)).toEqual(['blue_check_mark']);
     });
 
-    it('shows nothing for another team still pending once review is under way', async () => {
-      store.setChannelTeam('C1', true, 'platform-team');
+    it('keeps asking a team still pending, even once review is under way', async () => {
+      store.setChannelTeam('C1', 'platform-team');
+      store.linkMessage(pr.id, 'C1', '111.1');
+
+      await reconciler.reconcilePr(teamDone());
+      expect(reactions.calls.map((c) => c.name)).toEqual(['please']);
+    });
+
+    it('shows nothing for a team the codeowner bot does not name', async () => {
+      store.setChannelTeam('C1', 'viewer-team');
       store.linkMessage(pr.id, 'C1', '111.1');
 
       const summary = await reconciler.reconcilePr(teamDone());
       expect(reactions.calls).toEqual([]);
       expect(summary.unchanged).toBe(1);
-    });
-
-    it('ignores the team in a public channel', async () => {
-      store.setChannelTeam('C1', false, 'creator-team');
-      store.linkMessage(pr.id, 'C1', '111.1');
-
-      await reconciler.reconcilePr(teamDone());
-      expect(reactions.calls).toEqual([]);
     });
   });
 });

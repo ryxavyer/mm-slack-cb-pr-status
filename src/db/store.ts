@@ -72,47 +72,26 @@ export class Store {
     return existing;
   }
 
-  /**
-   * Records whether a Slack channel is private. Learned from `channel_type` on
-   * message events; `link_shared` does not carry it, so a channel stays unknown
-   * until a message event arrives from it. Leaves any team setting alone.
-   */
-  setChannelPrivacy(channelId: string, isPrivate: boolean, now = Date.now()): void {
-    this.db
-      .insert(slackChannels)
-      .values({ channelId, isPrivate, updatedAt: now })
-      .onConflictDoUpdate({
-        target: slackChannels.channelId,
-        set: { isPrivate, updatedAt: now },
-      })
-      .run();
-  }
-
   /** Sets or clears (null) the GitHub team a channel represents. */
-  setChannelTeam(channelId: string, isPrivate: boolean, team: string | null, now = Date.now()): void {
+  setChannelTeam(channelId: string, team: string | null, now = Date.now()): void {
     this.db
       .insert(slackChannels)
-      .values({ channelId, isPrivate, team, updatedAt: now })
+      .values({ channelId, team, updatedAt: now })
       .onConflictDoUpdate({
         target: slackChannels.channelId,
-        set: { isPrivate, team, updatedAt: now },
+        set: { team, updatedAt: now },
       })
       .run();
   }
 
-  /**
-   * The GitHub team whose progress a channel's messages show, or null for the
-   * whole-PR view. A team is honoured only while the channel is known to be
-   * private: anyone can tag any team in a public channel, so a team setting
-   * there could signal "done" to people who are still needed.
-   */
+  /** The GitHub team whose progress a channel's messages show, or null for the plain view. */
   channelTeam(channelId: string): string | null {
     const row = this.db
-      .select({ isPrivate: slackChannels.isPrivate, team: slackChannels.team })
+      .select({ team: slackChannels.team })
       .from(slackChannels)
       .where(eq(slackChannels.channelId, channelId))
       .get();
-    return row?.isPrivate === true ? row.team : null;
+    return row?.team ?? null;
   }
 
   /** Distinct message timestamps tracked in one channel. */

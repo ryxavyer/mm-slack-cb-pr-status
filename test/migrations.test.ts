@@ -43,8 +43,7 @@ describe('database upgrade', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('upgrades a database from the previous release without losing tracked PRs or channels', () => {
-    // Migration 4 is the last one the previous release shipped.
+  it('upgrades a database from before channel teams without losing tracked PRs', () => {
     const old = migrateTo(4);
     old
       .prepare(
@@ -67,9 +66,9 @@ describe('database upgrade', () => {
     });
     expect(store.messageReaction('G1', '111.1')).toBe('1of2');
 
-    // Channels come through with no team; a private one can then be set up.
+    // Channels come through with no team, and can then be set up.
     expect(store.channelTeam('G1')).toBeNull();
-    store.setChannelTeam('G1', true, 'creator-team');
+    store.setChannelTeam('G1', 'creator-team');
     expect(store.channelTeam('G1')).toBe('creator-team');
     handle.close();
 
@@ -80,11 +79,39 @@ describe('database upgrade', () => {
     sqlite.close();
   });
 
+  it('upgrades a database with private-only channel teams, keeping every team set', () => {
+    // Migration 5 recorded every channel's privacy and allowed teams only in private ones.
+    const old = migrateTo(5);
+    old
+      .prepare(
+        `INSERT INTO slack_channels (channel_id, is_private, team)
+         VALUES ('G1', 1, 'monetization-team'), ('G2', 1, NULL), ('C1', 0, NULL)`,
+      )
+      .run();
+    old.close();
+
+    const handle = openDatabase(path);
+    const store = new Store(handle.db);
+    expect(store.channelTeam('G1')).toBe('monetization-team');
+
+    // A public channel can now be set up too.
+    store.setChannelTeam('C1', 'creator-team');
+    expect(store.channelTeam('C1')).toBe('creator-team');
+    handle.close();
+
+    const sqlite = new Database(path);
+    expect(columns(sqlite, 'slack_channels').sort()).toEqual(['channel_id', 'team', 'updated_at']);
+    // Channels only ever seen, never set up, are gone; set-up ones remain.
+    const ids = sqlite.prepare('SELECT channel_id FROM slack_channels ORDER BY channel_id').all();
+    expect(ids).toEqual([{ channel_id: 'C1' }, { channel_id: 'G1' }]);
+    sqlite.close();
+  });
+
   it('opens an up-to-date database again without re-running anything', () => {
     openDatabase(path).close();
     const handle = openDatabase(path);
     const store = new Store(handle.db);
-    store.setChannelTeam('G1', true, 'creator-team');
+    store.setChannelTeam('G1', 'creator-team');
     handle.close();
 
     const reopened = openDatabase(path);

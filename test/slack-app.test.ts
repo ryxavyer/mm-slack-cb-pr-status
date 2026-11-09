@@ -108,41 +108,25 @@ describe('Slack app', () => {
     });
   });
 
-  describe('channel privacy', () => {
-    it('treats private channels and group DMs as private', async () => {
-      for (const [channel, type] of [
-        ['G1', 'group'],
-        ['G2', 'mpim'],
-      ] as const) {
-        await setup(channel, type, 'team creator-team');
-        expect(store.channelTeam(channel), type).toBe('creator-team');
-      }
-      expect(ackNames()).toEqual(['ok_hand', 'ok_hand']);
-    });
-
-    it('records a public channel from any message, switching off a team set while private', async () => {
-      store.setChannelTeam('C1', true, 'creator-team');
-
-      await post('C1', 'channel', 'just chatting');
-
-      expect(store.channelTeam('C1')).toBeNull();
-    });
-
-    it('leaves the recorded type alone when a message carries none', async () => {
-      store.setChannelTeam('G1', true, 'creator-team');
-
-      await post('G1', undefined, 'just chatting');
-
-      expect(store.channelTeam('G1')).toBe('creator-team');
-    });
-  });
-
   describe('setup messages', () => {
-    it('sets the team in a private channel and acknowledges with a reaction', async () => {
+    it('sets the team and acknowledges with a reaction', async () => {
       await setup('G1', 'group', 'team @multimediallc/creator-team');
 
       expect(store.channelTeam('G1')).toBe('creator-team');
       expect(acks).toEqual([{ channel: 'G1', timestamp: '999.9', name: 'ok_hand' }]);
+    });
+
+    it('works in any channel, public, private or not yet seen', async () => {
+      for (const [channel, type] of [
+        ['C1', 'channel'],
+        ['G1', 'group'],
+        ['G2', 'mpim'],
+        ['C2', undefined],
+      ] as const) {
+        await setup(channel, type, 'team creator-team');
+        expect(store.channelTeam(channel), channel).toBe('creator-team');
+      }
+      expect(ackNames()).toEqual(['ok_hand', 'ok_hand', 'ok_hand', 'ok_hand']);
     });
 
     it('clears the team', async () => {
@@ -151,20 +135,6 @@ describe('Slack app', () => {
 
       expect(store.channelTeam('G1')).toBeNull();
       expect(ackNames()).toEqual(['ok_hand', 'ok_hand']);
-    });
-
-    it('refuses a team in a public channel', async () => {
-      await setup('C1', 'channel', 'team creator-team');
-
-      expect(store.channelTeam('C1')).toBeNull();
-      expect(ackNames()).toEqual(['no_entry']);
-    });
-
-    it('refuses a team when the channel type is unknown, as for a public channel', async () => {
-      await setup('G1', undefined, 'team creator-team');
-
-      expect(store.channelTeam('G1')).toBeNull();
-      expect(ackNames()).toEqual(['no_entry']);
     });
 
     it('answers anything else addressed to the bot with a question mark, changing nothing', async () => {
@@ -253,14 +223,12 @@ describe('Slack app', () => {
       expect(trackLinks).toHaveBeenCalledWith('C1', '111.1', [ref]);
     });
 
-    it('leaves tracking to link_shared when the scan is off, but still records privacy', async () => {
+    it('leaves tracking to link_shared when the scan is off', async () => {
       build({ enableMessageScan: false });
-      store.setChannelTeam('C1', true, 'creator-team');
 
       await post('C1', 'channel', `please review ${PR_URL}`);
 
       expect(trackLinks).not.toHaveBeenCalled();
-      expect(store.channelTeam('C1')).toBeNull();
     });
   });
 });

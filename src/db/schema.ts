@@ -55,18 +55,12 @@ export const prMessages = sqliteTable(
 );
 
 /**
- * What we know about the Slack channels we have seen messages in.
- *
- * Privacy is a property of the channel, not of any one message, and it decides
- * whether a team view is allowed there — see `messageState`. It is kept here
- * rather than on `pr_messages` so that a channel learned from one message
- * applies to every other message in it, including ones discovered through
- * `link_shared`, which carries no `channel_type`.
+ * Per-channel settings made from Slack. A row exists only once someone has set
+ * up the channel; no row means no team.
  */
 export const slackChannels = sqliteTable('slack_channels', {
   channelId: text('channel_id').primaryKey(),
-  isPrivate: integer('is_private', { mode: 'boolean' }).notNull(),
-  /** GitHub team slug set from Slack. Only honoured while the channel is private. */
+  /** GitHub team slug whose progress the channel's messages show. Null for the plain view. */
   team: text('team'),
   updatedAt: integer('updated_at')
     .notNull()

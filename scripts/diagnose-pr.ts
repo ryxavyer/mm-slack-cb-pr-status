@@ -7,8 +7,8 @@
  *   GITHUB_TOKEN=ghp_... npx tsx scripts/diagnose-pr.ts <pr-url>
  *
  * Reads GITHUB_TOKEN, and optionally CODEOWNER_BOT_LOGIN (default mmllc-gh) and
- * TEAM, a GitHub team slug, to also show what a private channel set to that team
- * would see. Read-only — it never touches Slack or the database.
+ * TEAM, a GitHub team slug, to also show what a channel set to that team would
+ * see. Read-only — it never touches Slack or the database.
  */
 import { Octokit } from 'octokit';
 import type { EmojiConfig } from '../src/config.js';
@@ -200,8 +200,8 @@ if (merged || closed) {
   console.log(`  (this PR is ${merged ? 'merged' : 'closed'}, which outranks everything below;`);
   console.log('   the states shown use the review state so the derivation stays visible)');
 }
-const views: [string, string | null][] = [['public channel', null]];
-if (team) views.push([`private channel set to ${team}`, team]);
+const views: [string, string | null][] = [['channel with no team', null]];
+if (team) views.push([`channel set to ${team}`, team]);
 for (const [label, slug] of views) {
   const shown = messageState(tracked, slug);
   console.log(`  ${label.padEnd(36)} ${shown.padEnd(18)} ${emojiForState(shown, emoji) ?? '(no reaction)'}`);

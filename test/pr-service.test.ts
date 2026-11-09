@@ -17,39 +17,30 @@ import {
 const ref: PrRef = { owner: 'acme', repo: 'monolith', number: 42 };
 const other: PrRef = { owner: 'acme', repo: 'monolith', number: 43 };
 
-/** A public channel, and a private one set to creator-team. */
-const PUBLIC = 'C_PUBLIC';
+/** A channel with no team set, and one set to creator-team. */
+const PLAIN = 'C_PLAIN';
 const TEAM = 'C_TEAM';
 
+const creator = (satisfied: boolean) => ({ teams: ['creator-team'], satisfied });
+const platform = (satisfied: boolean) => ({ teams: ['platform-team'], satisfied });
+const found = (n: number) => ({ required: 2, found: n, met: n >= 2 });
+
 /**
- * The codeowner bot's comment at each point of a typical review: creator-team
- * and platform-team both own files, and the bot wants two reviews in total.
+ * The codeowner bot's comment at each point of a review. Unless the name says
+ * `solo`, creator-team and platform-team both own files; the bot always wants
+ * two reviews in total.
  */
 const STAGES = {
-  waiting: {
-    requirements: [
-      { teams: ['creator-team'], satisfied: false },
-      { teams: ['platform-team'], satisfied: false },
-    ],
-    minimum: { required: 2, found: 0, met: false },
-    allSatisfied: false,
-  },
-  oneOfTwo: {
-    requirements: [
-      { teams: ['creator-team'], satisfied: true },
-      { teams: ['platform-team'], satisfied: false },
-    ],
-    minimum: { required: 2, found: 1, met: false },
-    allSatisfied: false,
-  },
-  teamDone: {
-    requirements: [
-      { teams: ['creator-team'], satisfied: true },
-      { teams: ['platform-team'], satisfied: false },
-    ],
-    minimum: { required: 2, found: 2, met: true },
-    allSatisfied: false,
-  },
+  waiting: { requirements: [creator(false), platform(false)], minimum: found(0), allSatisfied: false },
+  /** platform-team approved; creator-team still owes its review. */
+  otherDone: { requirements: [creator(false), platform(true)], minimum: found(1), allSatisfied: false },
+  /** creator-team approved; platform-team still owes its review, which will also cover the count. */
+  teamDone: { requirements: [creator(true), platform(false)], minimum: found(1), allSatisfied: false },
+  /** One person in both teams approved, ticking both lines at once: one more review from anyone. */
+  bothTicked: { requirements: [creator(true), platform(true)], minimum: found(1), allSatisfied: false },
+  /** creator-team is the only code owner and has one of its two reviews. */
+  soloWaiting: { requirements: [creator(false)], minimum: found(0), allSatisfied: false },
+  oneOfTwo: { requirements: [creator(true)], minimum: found(1), allSatisfied: false },
   approved: { requirements: [], minimum: null, allSatisfied: true },
 } satisfies Record<string, CodeownerStatus>;
 
@@ -71,10 +62,10 @@ describe('PrService', () => {
 
   /**
    * Puts a PR at a review stage, optionally with other GitHub facts. Every stage
-   * past `waiting` has had a review.
+   * but the waiting ones has had a review.
    */
   const stage = (pr: PrRef, name: keyof typeof STAGES | null, status: Partial<PrStatus> = {}) => {
-    github.set(pr, { reviewed: name !== null && name !== 'waiting', ...status });
+    github.set(pr, { reviewed: name !== null && name !== 'waiting' && name !== 'soloWaiting', ...status });
     github.setCodeownerStatus(pr, name === null ? null : STAGES[name]);
   };
 
@@ -85,8 +76,7 @@ describe('PrService', () => {
     github = new FakeGitHubClient();
     reactions = new FakeReactionClient();
     build();
-    store.setChannelPrivacy(PUBLIC, false);
-    store.setChannelTeam(TEAM, true, 'creator-team');
+    store.setChannelTeam(TEAM, 'creator-team');
   });
 
   afterEach(() => handle.close());
@@ -94,17 +84,17 @@ describe('PrService', () => {
   describe('trackLinks', () => {
     it('tracks a link and applies the emoji immediately', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       expect(store.findPr(ref)?.state).toBe('approved');
       expect(reactions.calls).toEqual([
-        { op: 'add', channel: PUBLIC, timestamp: '111.1', name: 'white_check_mark' },
+        { op: 'add', channel: PLAIN, timestamp: '111.1', name: 'white_check_mark' },
       ]);
     });
 
     it('shows nothing for an open PR the codeowner bot has not commented on', async () => {
       stage(ref, null);
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       await service.trackLinks(TEAM, '222.2', [ref]);
 
       expect(store.findPr(ref)?.state).toBe('no_reviews');
@@ -114,29 +104,29 @@ describe('PrService', () => {
     it('shows the no-reviews emoji only until the first review, in every channel', async () => {
       build({ emoji: testConfig().emoji });
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       await service.trackLinks(TEAM, '222.2', [ref]);
 
       expect(names()).toEqual(['add:please', 'add:please']);
 
-      // The first review lands: :please: goes, and only the team channel has
+      // creator-team reviews first: :please: goes, and only the team channel has
       // anything to say about the stage in between.
       reactions.calls.length = 0;
-      stage(ref, 'oneOfTwo');
+      stage(ref, 'teamDone');
       await service.runCycle();
-      expect(store.messageReaction(PUBLIC, '111.1')).toBeNull();
-      expect(store.messageReaction(TEAM, '222.2')).toBe('1of2');
+      expect(store.messageReaction(PLAIN, '111.1')).toBeNull();
+      expect(store.messageReaction(TEAM, '222.2')).toBe('blue_check_mark');
 
       stage(ref, 'approved');
       await service.runCycle();
-      expect(store.messageReaction(PUBLIC, '111.1')).toBe('white_check_mark');
+      expect(store.messageReaction(PLAIN, '111.1')).toBe('white_check_mark');
       expect(store.messageReaction(TEAM, '222.2')).toBe('white_check_mark');
     });
 
     it('tracks every repo when no allowlist is set', async () => {
       const elsewhere = { owner: 'other', repo: 'thing', number: 9 };
       stage(elsewhere, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [elsewhere]);
+      await service.trackLinks(PLAIN, '111.1', [elsewhere]);
 
       expect(store.findPr(elsewhere)?.state).toBe('approved');
     });
@@ -147,7 +137,7 @@ describe('PrService', () => {
       stage(ref, 'approved');
       stage(elsewhere, 'approved');
 
-      await service.trackLinks(PUBLIC, '111.1', [ref, elsewhere]);
+      await service.trackLinks(PLAIN, '111.1', [ref, elsewhere]);
 
       expect(store.findPr(ref)?.state).toBe('approved');
       // Not tracked at all — no row, no GitHub call, and crucially no reaction,
@@ -162,15 +152,15 @@ describe('PrService', () => {
       stage(ref, 'approved');
 
       // The parser lower-cases links, so `Acme/MonoLith` arrives normalised.
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       expect(store.findPr(ref)?.state).toBe('approved');
     });
 
     it('is idempotent across re-delivery and edits of the same message', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       const pr = store.findPr(ref);
       expect(store.counts().messages).toBe(1);
@@ -181,8 +171,8 @@ describe('PrService', () => {
 
     it('tracks the same PR posted in two messages and updates both', async () => {
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
-      await service.trackLinks(PUBLIC, '222.2', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '222.2', [ref]);
 
       stage(ref, 'approved');
       await service.runCycle();
@@ -195,7 +185,7 @@ describe('PrService', () => {
 
     it('applies the merged emoji at once for an already-merged PR', async () => {
       stage(ref, 'approved', { merged: true, closed: true });
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       expect(store.findPr(ref)?.state).toBe('merged');
       expect(names()).toEqual(['add:merged']);
@@ -207,7 +197,7 @@ describe('PrService', () => {
       github.fail(ref, new Error('boom'));
       stage(other, 'approved');
 
-      await service.trackLinks(PUBLIC, '111.1', [ref, other]);
+      await service.trackLinks(PLAIN, '111.1', [ref, other]);
 
       // The second link is still tracked and polled despite the first throwing.
       expect(store.findPr(ref)?.state).toBe('no_reviews');
@@ -219,9 +209,9 @@ describe('PrService', () => {
   });
 
   describe('channels', () => {
-    it('shows only the codeowner bot’s whole-PR verdict in a public channel', async () => {
+    it('shows only the codeowner bot’s whole-PR verdict in a channel with no team', async () => {
       stage(ref, 'teamDone');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       expect(reactions.calls).toEqual([]);
 
       stage(ref, 'approved');
@@ -229,68 +219,47 @@ describe('PrService', () => {
       expect(names()).toEqual(['add:white_check_mark']);
     });
 
-    it('ignores a team setting once the channel turns out to be public', async () => {
-      store.setChannelTeam(PUBLIC, false, 'creator-team');
-      stage(ref, 'teamDone');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
-
-      expect(reactions.calls).toEqual([]);
-    });
-
-    it('treats a channel whose type is not yet known as public', async () => {
-      // Only link_shared has arrived from this channel, which carries no
-      // channel_type, so there is no row for it at all.
-      stage(ref, 'teamDone');
-      await service.trackLinks('C_UNSEEN', '111.1', [ref]);
-
-      expect(reactions.calls).toEqual([]);
-    });
-
-    it('shows the whole-PR view in a private channel with no team set', async () => {
-      store.setChannelPrivacy('C_PRIVATE', true);
-      stage(ref, 'teamDone');
-      await service.trackLinks('C_PRIVATE', '111.1', [ref]);
-
-      expect(reactions.calls).toEqual([]);
-    });
-
-    it('shows the team’s progress in a private channel set to a team', async () => {
+    it('shows the team’s progress in a channel set to a team', async () => {
       stage(ref, 'teamDone');
       await service.trackLinks(TEAM, '111.1', [ref]);
 
       expect(names()).toEqual(['add:blue_check_mark']);
     });
 
-    it('shows the same PR differently per channel', async () => {
-      stage(ref, 'teamDone');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+    it('keeps asking the team while it still owes a review, though someone else has reviewed', async () => {
+      build({ emoji: testConfig().emoji });
+      stage(ref, 'otherDone');
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       await service.trackLinks(TEAM, '222.2', [ref]);
 
-      expect(store.messageReaction(PUBLIC, '111.1')).toBeNull();
+      expect(store.messageReaction(PLAIN, '111.1')).toBeNull();
+      expect(store.messageReaction(TEAM, '222.2')).toBe('please');
+    });
+
+    it('shows the same PR differently per channel', async () => {
+      stage(ref, 'teamDone');
+      await service.trackLinks(PLAIN, '111.1', [ref]);
+      await service.trackLinks(TEAM, '222.2', [ref]);
+
+      expect(store.messageReaction(PLAIN, '111.1')).toBeNull();
       expect(store.messageReaction(TEAM, '222.2')).toBe('blue_check_mark');
     });
   });
 
   describe('setChannelTeam', () => {
     it('applies a new team to messages already tracked in the channel', async () => {
-      store.setChannelPrivacy('C_PRIVATE', true);
       stage(ref, 'teamDone');
-      await service.trackLinks('C_PRIVATE', '111.1', [ref]);
+      await service.trackLinks('C_OTHER', '111.1', [ref]);
       expect(reactions.calls).toEqual([]);
 
-      expect(await service.setChannelTeam('C_PRIVATE', true, 'creator-team')).toBe('saved');
+      await service.setChannelTeam('C_OTHER', 'creator-team');
       expect(names()).toEqual(['add:blue_check_mark']);
 
-      // Clearing it goes back to the whole-PR view.
+      // Clearing it goes back to the plain view.
       reactions.calls.length = 0;
-      expect(await service.setChannelTeam('C_PRIVATE', true, null)).toBe('saved');
+      await service.setChannelTeam('C_OTHER', null);
       expect(names()).toEqual(['remove:blue_check_mark']);
-      expect(store.channelTeam('C_PRIVATE')).toBeNull();
-    });
-
-    it('refuses a team for a public channel', async () => {
-      expect(await service.setChannelTeam('C_OPEN', false, 'creator-team')).toBe('public_channel');
-      expect(store.channelTeam('C_OPEN')).toBeNull();
+      expect(store.channelTeam('C_OTHER')).toBeNull();
     });
   });
 
@@ -348,7 +317,7 @@ describe('PrService', () => {
 
     it('strips the reaction when the last PR on a message is retired', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       github.fail(ref, new PrUnreachableError(ref, 'not_found', 404));
       await service.runCycle();
@@ -363,7 +332,7 @@ describe('PrService', () => {
   describe('runCycle', () => {
     it('polls active PRs and reconciles the ones that changed', async () => {
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       reactions.calls.length = 0;
 
       stage(ref, 'approved');
@@ -381,7 +350,7 @@ describe('PrService', () => {
     it('reads only the configured codeowner bot, and does not count its reviews as someone looking', async () => {
       build({ codeownerBotLogin: 'review-bot' });
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       await service.runCycle();
 
       expect(github.botLogins.length).toBeGreaterThan(0);
@@ -401,31 +370,72 @@ describe('PrService', () => {
       expect(names()).toEqual(['add:1of2']);
     });
 
-    it('walks a PR through the whole lifecycle in a team channel', async () => {
+    it('walks a PR through review in a team channel, the team reviewing first', async () => {
+      build({ emoji: testConfig().emoji });
       stage(ref, 'waiting');
       await service.trackLinks(TEAM, '111.1', [ref]);
 
-      stage(ref, 'oneOfTwo');
-      await service.runCycle();
-      stage(ref, 'teamDone');
-      await service.runCycle();
-      stage(ref, 'approved');
-      await service.runCycle();
-      expect(store.findPr(ref)?.state).toBe('approved');
-
+      for (const next of ['teamDone', 'approved'] as const) {
+        stage(ref, next);
+        await service.runCycle();
+      }
       stage(ref, 'approved', { merged: true, closed: true });
       await service.runCycle();
       expect(store.findPr(ref)?.state).toBe('merged');
 
+      // No :1of2: on the way: platform-team's review will make the count anyway.
       expect(names()).toEqual([
-        'add:1of2',
-        'remove:1of2',
+        'add:please',
+        'remove:please',
         'add:blue_check_mark',
         'remove:blue_check_mark',
         'add:white_check_mark',
         'remove:white_check_mark',
         'add:merged',
       ]);
+    });
+
+    it('walks a PR through review in a team channel, the other team reviewing first', async () => {
+      build({ emoji: testConfig().emoji });
+      stage(ref, 'waiting');
+      await service.trackLinks(TEAM, '111.1', [ref]);
+
+      stage(ref, 'otherDone');
+      await service.runCycle();
+      expect(reactions.calls).toHaveLength(1);
+
+      stage(ref, 'approved');
+      await service.runCycle();
+      expect(names()).toEqual(['add:please', 'remove:please', 'add:white_check_mark']);
+    });
+
+    it('walks a PR the team alone owns through one of two', async () => {
+      build({ emoji: testConfig().emoji });
+      stage(ref, 'soloWaiting');
+      await service.trackLinks(TEAM, '111.1', [ref]);
+
+      for (const next of ['oneOfTwo', 'approved'] as const) {
+        stage(ref, next);
+        await service.runCycle();
+      }
+      expect(names()).toEqual([
+        'add:please',
+        'remove:please',
+        'add:1of2',
+        'remove:1of2',
+        'add:white_check_mark',
+      ]);
+    });
+
+    it('shows one of two when one reviewer in both teams ticks both lines at once', async () => {
+      build({ emoji: testConfig().emoji });
+      stage(ref, 'waiting');
+      await service.trackLinks(TEAM, '111.1', [ref]);
+
+      // Nothing else is outstanding, so the one review still missing falls to the team.
+      stage(ref, 'bothTicked');
+      await service.runCycle();
+      expect(names()).toEqual(['add:please', 'remove:please', 'add:1of2']);
     });
 
     it('swaps to the blocked emoji when a reviewer requests changes', async () => {
@@ -450,7 +460,7 @@ describe('PrService', () => {
 
     it('shows blocked even when the codeowner bot is satisfied', async () => {
       stage(ref, 'approved', { changesRequested: 1 });
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       expect(store.findPr(ref)?.state).toBe('changes_requested');
       expect(names()).toEqual(['add:request-changes']);
@@ -458,7 +468,7 @@ describe('PrService', () => {
 
     it('walks backwards when the codeowner bot withdraws approval', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       reactions.calls.length = 0;
 
       // New commits dismissed the reviews; the bot is waiting again.
@@ -471,7 +481,7 @@ describe('PrService', () => {
 
     it('stops polling a PR once it is terminal', async () => {
       stage(ref, null, { merged: true, closed: true });
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       github.requests.length = 0;
 
       await service.runCycle();
@@ -480,7 +490,7 @@ describe('PrService', () => {
 
     it('shows unknown rather than closed when GitHub stops answering', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       reactions.calls.length = 0;
 
       github.fail(ref, new PrUnreachableError(ref, 'unauthorized', 401));
@@ -497,7 +507,7 @@ describe('PrService', () => {
       ['not_found', 404],
     ] as const)('treats a %s response as unknown', async (reason, status) => {
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       github.fail(ref, new PrUnreachableError(ref, reason, status));
       await service.runCycle();
@@ -508,7 +518,7 @@ describe('PrService', () => {
 
     it('keeps polling an unknown PR and restores the real state once access returns', async () => {
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       github.fail(ref, new PrUnreachableError(ref, 'unauthorized', 401));
       await service.runCycle();
@@ -528,7 +538,7 @@ describe('PrService', () => {
 
     it('remembers the codeowner verdict while a PR is unreachable', async () => {
       stage(ref, 'oneOfTwo');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       github.fail(ref, new PrUnreachableError(ref, 'not_found', 404));
       await service.runCycle();
@@ -538,7 +548,7 @@ describe('PrService', () => {
 
     it('does not flip a PR to unknown on a transient error', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       reactions.calls.length = 0;
 
       // Rate limiting and 5xx are not access failures — state must not move.
@@ -552,7 +562,7 @@ describe('PrService', () => {
 
     it('keeps the unreachable clock running across repeated failures', async () => {
       stage(ref, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       github.fail(ref, new PrUnreachableError(ref, 'forbidden', 403));
       await service.runCycle();
@@ -565,8 +575,8 @@ describe('PrService', () => {
     it('survives a failing PR without abandoning the rest of the cycle', async () => {
       stage(ref, 'waiting');
       stage(other, 'waiting');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
-      await service.trackLinks(PUBLIC, '222.2', [other]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '222.2', [other]);
 
       github.fail(ref, new Error('502 from github'));
       stage(other, 'approved');
@@ -580,7 +590,7 @@ describe('PrService', () => {
     it('repairs a reaction that failed to apply earlier', async () => {
       stage(ref, 'approved');
       reactions.failAll('add', 'rate_limited');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       expect(store.messagesForPr(store.findPr(ref)!.id)[0]?.currentReaction).toBeNull();
 
       // Nothing about the PR changed, but the next cycle still fixes the emoji.
@@ -596,7 +606,7 @@ describe('PrService', () => {
   describe('cleanup', () => {
     it('drops PRs that went terminal longer ago than the TTL', async () => {
       stage(ref, 'approved', { merged: true, closed: true });
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       const ttl = config.cleanupTtlMs;
       expect((await service.cleanup(Date.now() + ttl - 1_000)).expired).toBe(0);
@@ -606,7 +616,7 @@ describe('PrService', () => {
 
     it('gives up on a PR that stays unreachable, removing its emoji first', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
 
       github.fail(ref, new PrUnreachableError(ref, 'unauthorized', 401));
       await service.runCycle();
@@ -625,7 +635,7 @@ describe('PrService', () => {
 
     it('does not give up on a PR that became reachable again', async () => {
       stage(ref, 'approved');
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
       github.fail(ref, new PrUnreachableError(ref, 'not_found', 404));
       await service.runCycle();
 
@@ -640,8 +650,8 @@ describe('PrService', () => {
     it('runs as part of every cycle', async () => {
       stage(ref, 'waiting');
       stage(other, 'approved', { merged: true, closed: true });
-      await service.trackLinks(PUBLIC, '111.1', [ref]);
-      await service.trackLinks(PUBLIC, '222.2', [other]);
+      await service.trackLinks(PLAIN, '111.1', [ref]);
+      await service.trackLinks(PLAIN, '222.2', [other]);
 
       // Negative TTL: everything already closed is past its cutoff, regardless of
       // how many milliseconds this test takes to reach the cycle.
