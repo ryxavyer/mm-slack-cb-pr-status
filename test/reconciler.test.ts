@@ -279,13 +279,12 @@ describe('Reconciler', () => {
       expect(reactions.calls.map((c) => c.name)).toEqual(['please']);
     });
 
-    it('shows nothing for a team the codeowner bot does not name', async () => {
+    it('shows a team the codeowner bot does not name that it owes nothing', async () => {
       store.setChannelTeam('C1', 'viewer-team');
       store.linkMessage(pr.id, 'C1', '111.1');
 
-      const summary = await reconciler.reconcilePr(teamDone());
-      expect(reactions.calls).toEqual([]);
-      expect(summary.unchanged).toBe(1);
+      await reconciler.reconcilePr(teamDone());
+      expect(reactions.calls.map((c) => c.name)).toEqual(['codeowner-approved-large']);
     });
   });
 });

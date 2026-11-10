@@ -197,7 +197,8 @@ its reactions and stops tracking those PRs.
 | ------- | ------------ |
 | No emoji ever appears | The bot was never `/invite`d into the channel |
 | PRs never get `:white_check_mark:` | The codeowner bot hasn't commented on them (its comment is the only approval signal), or `CODEOWNER_BOT_LOGIN` doesn't match its GitHub login |
-| A team channel shows no team progress | The team was never set (`@CB PR Status team <slug>`), the slug doesn't match the team name in the codeowner bot's comment, or the team isn't a code owner on that PR (the bot doesn't name it) |
+| A team channel shows no team progress | The team was never set (`@CB PR Status team <slug>`), or the codeowner bot hasn't commented on that PR yet |
+| A team channel shows `:codeowner-approved-large:` on PRs the team should review | The team isn't a code owner on those PRs, so it owes no code owner review. If it's every PR, the slug doesn't match the team name in the codeowner bot's comment: set it again |
 | `emoji does not exist in this workspace` | `EMOJI_MERGED` names a custom emoji that hasn't been created |
 | Every PR shows `:sleeping:` | `GITHUB_TOKEN` expired, was revoked, lost repo access, or isn't SSO-authorised. Look for `pr unreachable on github` lines — they carry the `reason` and HTTP `status`. Fix the token and the emoji correct themselves on the next poll; no restart needed |
 | `poll cycle complete` with `failed > 0` | Transient GitHub errors; check the `poll failed for pr` lines |

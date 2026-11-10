@@ -214,12 +214,25 @@ describe('messageState', () => {
     expect(messageState(makePr('in_review'), 'creator-team')).toBe('in_review');
   });
 
-  it('gives the plain view when the bot does not name the team, whatever the count', () => {
+  it('reports team_done for a team the bot does not name, even before any review', () => {
+    // The team owes no code owner review; other code owners do.
     for (const minimum of [null, oneOfTwo, twoOfTwo]) {
       const reqs = status([platform(false)], minimum);
-      expect(messageState(makePr('no_reviews', reqs), 'creator-team')).toBe('no_reviews');
-      expect(messageState(makePr('in_review', reqs), 'creator-team')).toBe('in_review');
+      expect(messageState(makePr('no_reviews', reqs), 'creator-team')).toBe('team_done');
+      expect(messageState(makePr('in_review', reqs), 'creator-team')).toBe('team_done');
     }
+  });
+
+  it('reports partial for a team the bot does not name when only one of two reviews is left', () => {
+    const pr = makePr('in_review', status([platform(true)], oneOfTwo));
+    expect(messageState(pr, 'creator-team')).toBe('partial');
+  });
+
+  it('gives the plain view when no code owner is open and only the count is left', () => {
+    // No team owes anything as a code owner, so the badge would claim too much.
+    const none = { required: 2, found: 0, met: false };
+    expect(messageState(makePr('no_reviews', status([], none)), 'creator-team')).toBe('no_reviews');
+    expect(messageState(makePr('no_reviews', status([platform(true)], none)), 'creator-team')).toBe('no_reviews');
   });
 
   it('asks for the team while its requirement is open, even after others have reviewed', () => {

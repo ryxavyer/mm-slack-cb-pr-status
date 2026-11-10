@@ -76,9 +76,9 @@ describe('codeowner comment -> Slack reaction', () => {
       expect(reactionFor(body, 'media-library-experts')).toBe('please');
     });
 
-    it('goes quiet for a team the bot does not name', () => {
-      expect(reactionFor(body, 'creator-team')).toBeNull();
-      expect(reactionFor(body, 'creator-team', { reviewed: false })).toBe('please');
+    it('tells a team the bot does not name that it owes nothing, even before any review', () => {
+      expect(reactionFor(body, 'creator-team')).toBe('codeowner-approved-large');
+      expect(reactionFor(body, 'creator-team', { reviewed: false })).toBe('codeowner-approved-large');
     });
 
     it('still defers to merged, closed and blocking states', () => {

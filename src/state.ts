@@ -56,9 +56,12 @@ export function computeState({
  *   - `partial` once the team's requirements are satisfied, nothing else is
  *     open, and the bot reports exactly one of two required reviews: the one
  *     review still missing naturally falls to the team.
+ *   - Otherwise the plain view.
  *
- * A team the bot doesn't name gets the plain view. The bot says nothing about
- * that team, and we don't guess.
+ * A team the bot doesn't name owes no code owner review, so it counts as
+ * satisfied from the start: `team_done` while other code owners are open,
+ * even before anyone has reviewed. Until the bot comments we can't tell, so
+ * that's the plain view.
  */
 export function messageState(pr: TrackedPr, team: string | null): PrState {
   const waiting = pr.state === 'no_reviews' || pr.state === 'in_review';
@@ -73,15 +76,13 @@ export function messageState(pr: TrackedPr, team: string | null): PrState {
 
   const slug = team.toLowerCase();
   const names = (r: CodeownerRequirement) => r.teams.some((t) => t.toLowerCase() === slug);
-  const teamReqs = status.requirements.filter(names);
-  if (teamReqs.length === 0) return pr.state;
-  if (teamReqs.some((r) => !r.satisfied)) return 'no_reviews';
+  if (status.requirements.some((r) => names(r) && !r.satisfied)) return 'no_reviews';
 
-  // Every requirement naming the team is satisfied, so any open one is someone else's.
+  // Every requirement naming the team (if any) is satisfied, so any open one is someone else's.
   if (status.requirements.some((r) => !r.satisfied)) return 'team_done';
   const { minimum } = status;
   if (minimum?.required === 2 && minimum.found === 1) return 'partial';
-  return 'in_review';
+  return pr.state;
 }
 
 /**

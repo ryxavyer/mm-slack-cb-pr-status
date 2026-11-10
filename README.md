@@ -13,11 +13,11 @@ whole; a channel set to a GitHub team also shows that team's part in it:
 
 | Situation (from the codeowner bot's comment and GitHub)                     | No team set          | Channel set to a team |
 | --------------------------------------------------------------------------- | -------------------- | --------------------- |
-| Nobody has reviewed yet (the author's, bots' and the codeowner bot's don't count) | `:please:` (custom) | `:please:`          |
+| Nobody has reviewed yet (the author's, bots' and the codeowner bot's don't count) | `:please:` (custom) | `:please:` if the team is listed |
 | Someone reviewed; the team is listed but its line isn't ticked              | *(none)*             | `:please:`            |
-| The team's line is ticked; other code owners still outstanding              | *(none)*             | `:codeowner-approved-large:` (custom) |
-| The team's line is ticked; nothing else outstanding; "found 1 of 2"         | *(none)*             | `:1of2:` (custom)     |
-| Someone reviewed; the team isn't listed, or the codeowner bot hasn't commented | *(none)*          | *(none)*              |
+| The team's line is ticked, or the team isn't listed; other code owners still outstanding | *(none)* | `:codeowner-approved-large:` (custom) |
+| The team's line is ticked, or the team isn't listed; nothing else outstanding; "found 1 of 2" | *(none)* | `:1of2:` (custom) |
+| Someone reviewed; the codeowner bot hasn't commented                        | *(none)*             | *(none)*              |
 | The codeowner bot says the whole PR is satisfied                            | `:white_check_mark:` | `:white_check_mark:`  |
 | A reviewer's latest review requests changes                                 | `:request-changes:`  | `:request-changes:`   |
 | Merged / closed without merge                                               | `:merged:` (custom) / `:x:` | `:merged:` / `:x:` |
@@ -42,7 +42,8 @@ starts with the bot's mention:
 The slug is the team's name as the codeowner bot writes it (`@multimediallc/creator-team`
 → `creator-team`). The bot reacts `:ok_hand:` when it's saved and `:question:` if it
 couldn't read the message. It can't check the slug against GitHub, so a typo is
-saved too, and the channel then never shows team progress.
+saved too. The codeowner bot then never names the team, so every PR in the channel
+shows `:codeowner-approved-large:` as though the team owed nothing.
 
 Every emoji is configurable. The bot only ever adds or removes emoji from this
 managed set, one at a time per message; reactions added by people are never
