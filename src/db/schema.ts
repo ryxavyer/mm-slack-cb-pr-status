@@ -60,7 +60,10 @@ export const prMessages = sqliteTable(
  */
 export const slackChannels = sqliteTable('slack_channels', {
   channelId: text('channel_id').primaryKey(),
-  /** GitHub team slug whose progress the channel's messages show. Null for the plain view. */
+  /**
+   * GitHub team slugs whose progress the channel's messages show, separated by
+   * spaces. Null for the plain view.
+   */
   team: text('team'),
   updatedAt: integer('updated_at')
     .notNull()

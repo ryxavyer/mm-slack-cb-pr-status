@@ -125,8 +125,8 @@ export function createSlackApp({ config, service, store, logger }: SlackAppDeps)
         : null;
     if (command) {
       let outcome: keyof typeof SETUP_REPLY = 'invalid';
-      if (command.kind === 'set_team') {
-        await service.setChannelTeam(channel, command.team);
+      if (command.kind === 'set_teams') {
+        await service.setChannelTeams(channel, command.teams);
         outcome = 'saved';
       }
       logger.info({ channel, messageTs: message.ts, command, outcome }, 'setup message handled');

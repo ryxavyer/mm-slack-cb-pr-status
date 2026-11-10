@@ -53,7 +53,7 @@ function reactionFor(body: string | null, team: string | null = null, facts: Git
     codeownerStatus: codeowners === null ? null : JSON.stringify(codeowners),
   } satisfies TrackedPr;
 
-  return emojiForState(messageState(pr, team), emoji);
+  return emojiForState(messageState(pr, team === null ? [] : [team]), emoji);
 }
 
 const NONE = null;

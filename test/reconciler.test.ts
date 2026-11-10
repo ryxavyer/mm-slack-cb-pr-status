@@ -264,7 +264,7 @@ describe('Reconciler', () => {
     };
 
     it('shows team progress in a channel set to that team', async () => {
-      store.setChannelTeam('C1', 'creator-team');
+      store.setChannelTeams('C1', ['creator-team']);
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());
@@ -272,7 +272,7 @@ describe('Reconciler', () => {
     });
 
     it('keeps asking a team still pending, even once review is under way', async () => {
-      store.setChannelTeam('C1', 'platform-team');
+      store.setChannelTeams('C1', ['platform-team']);
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());
@@ -280,7 +280,7 @@ describe('Reconciler', () => {
     });
 
     it('shows a team the codeowner bot does not name that it owes nothing', async () => {
-      store.setChannelTeam('C1', 'viewer-team');
+      store.setChannelTeams('C1', ['viewer-team']);
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());

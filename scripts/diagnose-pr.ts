@@ -7,8 +7,8 @@
  *   GITHUB_TOKEN=ghp_... npx tsx scripts/diagnose-pr.ts <pr-url>
  *
  * Reads GITHUB_TOKEN, and optionally CODEOWNER_BOT_LOGIN (default mmllc-gh) and
- * TEAM, a GitHub team slug, to also show what a channel set to that team would
- * see. Read-only — it never touches Slack or the database.
+ * TEAM, one or more GitHub team slugs (space or comma separated), to also show
+ * what a channel set to those teams would see. Read-only — it never touches Slack or the database.
  */
 import { Octokit } from 'octokit';
 import type { EmojiConfig } from '../src/config.js';
@@ -49,7 +49,7 @@ if (!token) {
 }
 
 const botLogin = process.env['CODEOWNER_BOT_LOGIN'] ?? 'mmllc-gh';
-const team = process.env['TEAM']?.toLowerCase() || null;
+const teams = (process.env['TEAM'] ?? '').toLowerCase().split(/[\s,]+/).filter(Boolean);
 
 const octokit = new Octokit({
   auth: token,
@@ -200,10 +200,10 @@ if (merged || closed) {
   console.log(`  (this PR is ${merged ? 'merged' : 'closed'}, which outranks everything below;`);
   console.log('   the states shown use the review state so the derivation stays visible)');
 }
-const views: [string, string | null][] = [['channel with no team', null]];
-if (team) views.push([`channel set to ${team}`, team]);
-for (const [label, slug] of views) {
-  const shown = messageState(tracked, slug);
+const views: [string, string[]][] = [['channel with no team', []]];
+if (teams.length > 0) views.push([`channel set to ${teams.join(' ')}`, teams]);
+for (const [label, channelTeams] of views) {
+  const shown = messageState(tracked, channelTeams);
   console.log(`  ${label.padEnd(36)} ${shown.padEnd(18)} ${emojiForState(shown, emoji) ?? '(no reaction)'}`);
 }
 console.log();

@@ -40,14 +40,15 @@ export function computeState({
 }
 
 /**
- * The state a PR shows on one message, given the GitHub team of the channel it
- * was posted in (null for a channel with no team set).
+ * The state a PR shows on one message, given the GitHub teams of the channel it
+ * was posted in (none for a channel with no team set).
  *
  * Without a team this is just the PR's own state: "unreviewed", "in review",
  * "blocked", "approved by the codeowner bot" or "finished".
  *
  * With a team, a PR still waiting on reviews shows that team's part in it, as
- * the codeowner bot reports it:
+ * the codeowner bot reports it. With several teams, a requirement is the
+ * channel's when it names any of them, and they count as one team:
  *   - `no_reviews` while any requirement naming the team is unsatisfied, even
  *     after other people have reviewed: the team is still needed.
  *   - `team_done` once the team's requirements are satisfied and another
@@ -63,9 +64,9 @@ export function computeState({
  * even before anyone has reviewed. Until the bot comments we can't tell, so
  * that's the plain view.
  */
-export function messageState(pr: TrackedPr, team: string | null): PrState {
+export function messageState(pr: TrackedPr, teams: readonly string[]): PrState {
   const waiting = pr.state === 'no_reviews' || pr.state === 'in_review';
-  if (!waiting || team === null || !pr.codeownerStatus) return pr.state;
+  if (!waiting || teams.length === 0 || !pr.codeownerStatus) return pr.state;
 
   let status: CodeownerStatus;
   try {
@@ -74,11 +75,11 @@ export function messageState(pr: TrackedPr, team: string | null): PrState {
     return pr.state;
   }
 
-  const slug = team.toLowerCase();
-  const names = (r: CodeownerRequirement) => r.teams.some((t) => t.toLowerCase() === slug);
+  const slugs = new Set(teams.map((t) => t.toLowerCase()));
+  const names = (r: CodeownerRequirement) => r.teams.some((t) => slugs.has(t.toLowerCase()));
   if (status.requirements.some((r) => names(r) && !r.satisfied)) return 'no_reviews';
 
-  // Every requirement naming the team (if any) is satisfied, so any open one is someone else's.
+  // Every requirement naming the teams (if any) is satisfied, so any open one is someone else's.
   if (status.requirements.some((r) => !r.satisfied)) return 'team_done';
   const { minimum } = status;
   if (minimum?.required === 2 && minimum.found === 1) return 'partial';

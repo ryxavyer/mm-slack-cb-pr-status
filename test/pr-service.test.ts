@@ -76,7 +76,7 @@ describe('PrService', () => {
     github = new FakeGitHubClient();
     reactions = new FakeReactionClient();
     build();
-    store.setChannelTeam(TEAM, 'creator-team');
+    store.setChannelTeams(TEAM, ['creator-team']);
   });
 
   afterEach(() => handle.close());
@@ -246,20 +246,20 @@ describe('PrService', () => {
     });
   });
 
-  describe('setChannelTeam', () => {
+  describe('setChannelTeams', () => {
     it('applies a new team to messages already tracked in the channel', async () => {
       stage(ref, 'teamDone');
       await service.trackLinks('C_OTHER', '111.1', [ref]);
       expect(reactions.calls).toEqual([]);
 
-      await service.setChannelTeam('C_OTHER', 'creator-team');
+      await service.setChannelTeams('C_OTHER', ['creator-team']);
       expect(names()).toEqual(['add:codeowner-approved-large']);
 
       // Clearing it goes back to the plain view.
       reactions.calls.length = 0;
-      await service.setChannelTeam('C_OTHER', null);
+      await service.setChannelTeams('C_OTHER', []);
       expect(names()).toEqual(['remove:codeowner-approved-large']);
-      expect(store.channelTeam('C_OTHER')).toBeNull();
+      expect(store.channelTeams('C_OTHER')).toEqual([]);
     });
   });
 

@@ -198,51 +198,51 @@ describe('messageState', () => {
   it('is the PR’s own state without a team', () => {
     const pending = status([creator(false)], null);
     for (const state of ['no_reviews', 'in_review', 'approved', 'merged', 'changes_requested'] as const) {
-      expect(messageState(makePr(state, pending), null)).toBe(state);
+      expect(messageState(makePr(state, pending), [])).toBe(state);
     }
   });
 
   it('passes every settled state through, even with a team', () => {
     const pending = status([creator(false)], null);
     for (const state of ['approved', 'merged', 'closed', 'unknown', 'changes_requested'] as const) {
-      expect(messageState(makePr(state, pending), 'creator-team')).toBe(state);
+      expect(messageState(makePr(state, pending), ['creator-team'])).toBe(state);
     }
   });
 
   it('gives the plain view when the bot has not commented', () => {
-    expect(messageState(makePr('no_reviews'), 'creator-team')).toBe('no_reviews');
-    expect(messageState(makePr('in_review'), 'creator-team')).toBe('in_review');
+    expect(messageState(makePr('no_reviews'), ['creator-team'])).toBe('no_reviews');
+    expect(messageState(makePr('in_review'), ['creator-team'])).toBe('in_review');
   });
 
   it('reports team_done for a team the bot does not name, even before any review', () => {
     // The team owes no code owner review; other code owners do.
     for (const minimum of [null, oneOfTwo, twoOfTwo]) {
       const reqs = status([platform(false)], minimum);
-      expect(messageState(makePr('no_reviews', reqs), 'creator-team')).toBe('team_done');
-      expect(messageState(makePr('in_review', reqs), 'creator-team')).toBe('team_done');
+      expect(messageState(makePr('no_reviews', reqs), ['creator-team'])).toBe('team_done');
+      expect(messageState(makePr('in_review', reqs), ['creator-team'])).toBe('team_done');
     }
   });
 
   it('reports partial for a team the bot does not name when only one of two reviews is left', () => {
     const pr = makePr('in_review', status([platform(true)], oneOfTwo));
-    expect(messageState(pr, 'creator-team')).toBe('partial');
+    expect(messageState(pr, ['creator-team'])).toBe('partial');
   });
 
   it('gives the plain view when no code owner is open and only the count is left', () => {
     // No team owes anything as a code owner, so the badge would claim too much.
     const none = { required: 2, found: 0, met: false };
-    expect(messageState(makePr('no_reviews', status([], none)), 'creator-team')).toBe('no_reviews');
-    expect(messageState(makePr('no_reviews', status([platform(true)], none)), 'creator-team')).toBe('no_reviews');
+    expect(messageState(makePr('no_reviews', status([], none)), ['creator-team'])).toBe('no_reviews');
+    expect(messageState(makePr('no_reviews', status([platform(true)], none)), ['creator-team'])).toBe('no_reviews');
   });
 
   it('asks for the team while its requirement is open, even after others have reviewed', () => {
     const pr = (state: 'no_reviews' | 'in_review') =>
       makePr(state, status([creator(false), platform(true)], oneOfTwo));
 
-    expect(messageState(pr('no_reviews'), 'creator-team')).toBe('no_reviews');
-    expect(messageState(pr('in_review'), 'creator-team')).toBe('no_reviews');
+    expect(messageState(pr('no_reviews'), ['creator-team'])).toBe('no_reviews');
+    expect(messageState(pr('in_review'), ['creator-team'])).toBe('no_reviews');
     // platform-team's own line is done, and creator-team's review is still to come.
-    expect(messageState(pr('in_review'), 'platform-team')).toBe('team_done');
+    expect(messageState(pr('in_review'), ['platform-team'])).toBe('team_done');
   });
 
   it('asks for the team while any requirement naming it is open', () => {
@@ -250,26 +250,26 @@ describe('messageState', () => {
       'in_review',
       status([creator(false), { teams: ['creator-team', 'platform-team'], satisfied: true }], twoOfTwo),
     );
-    expect(messageState(pr, 'creator-team')).toBe('no_reviews');
+    expect(messageState(pr, ['creator-team'])).toBe('no_reviews');
   });
 
   it('reports team_done once the team is satisfied and other code owners are still open', () => {
     // Their reviews will cover the minimum too, so the count does not matter.
     for (const minimum of [null, oneOfTwo, twoOfTwo]) {
       const pr = makePr('in_review', status([creator(true), platform(false)], minimum));
-      expect(messageState(pr, 'creator-team'), JSON.stringify(minimum)).toBe('team_done');
+      expect(messageState(pr, ['creator-team']), JSON.stringify(minimum)).toBe('team_done');
     }
   });
 
   it('reports partial when only the review count is left and the bot reports one of two', () => {
     const pr = makePr('in_review', status([creator(true)], oneOfTwo));
-    expect(messageState(pr, 'creator-team')).toBe('partial');
+    expect(messageState(pr, ['creator-team'])).toBe('partial');
   });
 
   it('reports partial when one reviewer in both teams satisfied every line at once', () => {
     const pr = makePr('in_review', status([creator(true), platform(true)], oneOfTwo));
-    expect(messageState(pr, 'creator-team')).toBe('partial');
-    expect(messageState(pr, 'platform-team')).toBe('partial');
+    expect(messageState(pr, ['creator-team'])).toBe('partial');
+    expect(messageState(pr, ['platform-team'])).toBe('partial');
   });
 
   it('shows nothing for a review minimum other than two', () => {
@@ -277,7 +277,7 @@ describe('messageState', () => {
       { required: 3, found: 1, met: false },
       { required: 3, found: 2, met: false },
     ]) {
-      expect(messageState(makePr('in_review', status([creator(true)], minimum)), 'creator-team')).toBe('in_review');
+      expect(messageState(makePr('in_review', status([creator(true)], minimum)), ['creator-team'])).toBe('in_review');
     }
   });
 
@@ -293,12 +293,42 @@ describe('messageState', () => {
         null,
       ),
     );
-    expect(messageState(pr, 'creator-team')).toBe('team_done');
+    expect(messageState(pr, ['creator-team'])).toBe('team_done');
+  });
+
+  describe('with several teams', () => {
+    const monetization = (satisfied: boolean) => ({ teams: ['monetization-team'], satisfied });
+    const teams = ['monetization-team', 'creator-team'];
+
+    it('asks while a requirement naming any of them is open', () => {
+      // Only creator-team is a code owner; a monetization channel that also lists it is still needed.
+      expect(messageState(makePr('no_reviews', status([creator(false)], null)), teams)).toBe('no_reviews');
+      expect(messageState(makePr('in_review', status([creator(false), monetization(true)], oneOfTwo)), teams)).toBe(
+        'no_reviews',
+      );
+    });
+
+    it('reports team_done only once every requirement naming any of them is satisfied', () => {
+      expect(messageState(makePr('in_review', status([creator(true), platform(false)], null)), teams)).toBe('team_done');
+      expect(
+        messageState(makePr('in_review', status([creator(true), monetization(false), platform(false)], null)), teams),
+      ).toBe('no_reviews');
+    });
+
+    it('reports partial when they are done and only the second review is left', () => {
+      expect(messageState(makePr('in_review', status([creator(true), monetization(true)], oneOfTwo)), teams)).toBe(
+        'partial',
+      );
+    });
+
+    it('treats a PR naming none of them like a team the bot does not name', () => {
+      expect(messageState(makePr('no_reviews', status([platform(false)], null)), teams)).toBe('team_done');
+    });
   });
 
   it('matches team slugs case-insensitively', () => {
     const pr = makePr('in_review', status([{ teams: ['Creator-Team'], satisfied: true }, platform(false)], null));
-    expect(messageState(pr, 'creator-team')).toBe('team_done');
+    expect(messageState(pr, ['creator-team'])).toBe('team_done');
   });
 });
 

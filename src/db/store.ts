@@ -72,8 +72,9 @@ export class Store {
     return existing;
   }
 
-  /** Sets or clears (null) the GitHub team a channel represents. */
-  setChannelTeam(channelId: string, team: string | null, now = Date.now()): void {
+  /** Sets the GitHub teams a channel represents, replacing any before; none clears them. */
+  setChannelTeams(channelId: string, teams: readonly string[], now = Date.now()): void {
+    const team = teams.length > 0 ? teams.join(' ') : null;
     this.db
       .insert(slackChannels)
       .values({ channelId, team, updatedAt: now })
@@ -84,14 +85,14 @@ export class Store {
       .run();
   }
 
-  /** The GitHub team whose progress a channel's messages show, or null for the plain view. */
-  channelTeam(channelId: string): string | null {
+  /** The GitHub teams whose progress a channel's messages show; none for the plain view. */
+  channelTeams(channelId: string): string[] {
     const row = this.db
       .select({ team: slackChannels.team })
       .from(slackChannels)
       .where(eq(slackChannels.channelId, channelId))
       .get();
-    return row?.team ?? null;
+    return row?.team?.split(' ') ?? [];
   }
 
   /** Distinct message timestamps tracked in one channel. */

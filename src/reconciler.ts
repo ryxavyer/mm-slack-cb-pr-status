@@ -86,9 +86,9 @@ export class Reconciler {
   ): Promise<ReconcileSummary> {
     const summary = emptySummary();
     const prs = this.store.prsForMessage(channelId, messageTs);
-    // A channel set to a team shows that team's part in each PR; see messageState.
-    const teamSlug = this.store.channelTeam(channelId);
-    const state = aggregateState(prs.map((p) => messageState(p, teamSlug)));
+    // A channel set to teams shows their part in each PR; see messageState.
+    const teams = this.store.channelTeams(channelId);
+    const state = aggregateState(prs.map((p) => messageState(p, teams)));
     const target = state ? emojiForState(state, this.emoji) : null;
     const current =
       knownCurrent !== undefined ? knownCurrent : this.store.messageReaction(channelId, messageTs);
@@ -98,7 +98,7 @@ export class Reconciler {
       messageTs,
       prs: prs.map((p) => `${p.owner}/${p.repo}#${p.number}`),
       state,
-      ...(teamSlug ? { teamView: teamSlug } : {}),
+      ...(teams.length > 0 ? { teamView: teams.join(' ') } : {}),
     });
 
     if (current === target) {

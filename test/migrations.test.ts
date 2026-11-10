@@ -67,9 +67,9 @@ describe('database upgrade', () => {
     expect(store.messageReaction('G1', '111.1')).toBe('1of2');
 
     // Channels come through with no team, and can then be set up.
-    expect(store.channelTeam('G1')).toBeNull();
-    store.setChannelTeam('G1', 'creator-team');
-    expect(store.channelTeam('G1')).toBe('creator-team');
+    expect(store.channelTeams('G1')).toEqual([]);
+    store.setChannelTeams('G1', ['creator-team']);
+    expect(store.channelTeams('G1')).toEqual(['creator-team']);
     handle.close();
 
     const sqlite = new Database(path);
@@ -92,11 +92,11 @@ describe('database upgrade', () => {
 
     const handle = openDatabase(path);
     const store = new Store(handle.db);
-    expect(store.channelTeam('G1')).toBe('monetization-team');
+    expect(store.channelTeams('G1')).toEqual(['monetization-team']);
 
     // A public channel can now be set up too.
-    store.setChannelTeam('C1', 'creator-team');
-    expect(store.channelTeam('C1')).toBe('creator-team');
+    store.setChannelTeams('C1', ['creator-team']);
+    expect(store.channelTeams('C1')).toEqual(['creator-team']);
     handle.close();
 
     const sqlite = new Database(path);
@@ -111,11 +111,11 @@ describe('database upgrade', () => {
     openDatabase(path).close();
     const handle = openDatabase(path);
     const store = new Store(handle.db);
-    store.setChannelTeam('G1', 'creator-team');
+    store.setChannelTeams('G1', ['creator-team']);
     handle.close();
 
     const reopened = openDatabase(path);
-    expect(new Store(reopened.db).channelTeam('G1')).toBe('creator-team');
+    expect(new Store(reopened.db).channelTeams('G1')).toEqual(['creator-team']);
     reopened.close();
   });
 });

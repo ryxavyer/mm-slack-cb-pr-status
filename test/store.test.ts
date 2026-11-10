@@ -211,19 +211,24 @@ describe('Store', () => {
 
   describe('channel settings', () => {
     it('has no team for a channel nobody has set up', () => {
-      expect(store.channelTeam('C1')).toBeNull();
+      expect(store.channelTeams('C1')).toEqual([]);
     });
 
     it('sets, replaces and clears a channel’s team', () => {
-      store.setChannelTeam('C1', 'creator-team');
-      expect(store.channelTeam('C1')).toBe('creator-team');
-      expect(store.channelTeam('C2')).toBeNull();
+      store.setChannelTeams('C1', ['creator-team']);
+      expect(store.channelTeams('C1')).toEqual(['creator-team']);
+      expect(store.channelTeams('C2')).toEqual([]);
 
-      store.setChannelTeam('C1', 'platform-team');
-      expect(store.channelTeam('C1')).toBe('platform-team');
+      store.setChannelTeams('C1', ['platform-team']);
+      expect(store.channelTeams('C1')).toEqual(['platform-team']);
 
-      store.setChannelTeam('C1', null);
-      expect(store.channelTeam('C1')).toBeNull();
+      store.setChannelTeams('C1', []);
+      expect(store.channelTeams('C1')).toEqual([]);
+    });
+
+    it('keeps several teams in the order given', () => {
+      store.setChannelTeams('C1', ['monetization-team', 'creator-team']);
+      expect(store.channelTeams('C1')).toEqual(['monetization-team', 'creator-team']);
     });
 
     it('lists each tracked message in a channel once', () => {

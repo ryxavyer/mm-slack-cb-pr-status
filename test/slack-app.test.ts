@@ -112,7 +112,7 @@ describe('Slack app', () => {
     it('sets the team and acknowledges with a reaction', async () => {
       await setup('G1', 'group', 'team @multimediallc/creator-team');
 
-      expect(store.channelTeam('G1')).toBe('creator-team');
+      expect(store.channelTeams('G1')).toEqual(['creator-team']);
       expect(acks).toEqual([{ channel: 'G1', timestamp: '999.9', name: 'ok_hand' }]);
     });
 
@@ -124,16 +124,24 @@ describe('Slack app', () => {
         ['C2', undefined],
       ] as const) {
         await setup(channel, type, 'team creator-team');
-        expect(store.channelTeam(channel), channel).toBe('creator-team');
+        expect(store.channelTeams(channel), channel).toEqual(['creator-team']);
       }
       expect(ackNames()).toEqual(['ok_hand', 'ok_hand', 'ok_hand', 'ok_hand']);
+    });
+
+    it('sets several teams at once, replacing any before', async () => {
+      await setup('G1', 'group', 'team platform-team');
+      await setup('G1', 'group', 'team monetization-team, creator-team');
+
+      expect(store.channelTeams('G1')).toEqual(['monetization-team', 'creator-team']);
+      expect(ackNames()).toEqual(['ok_hand', 'ok_hand']);
     });
 
     it('clears the team', async () => {
       await setup('G1', 'group', 'team creator-team');
       await setup('G1', 'group', 'team none');
 
-      expect(store.channelTeam('G1')).toBeNull();
+      expect(store.channelTeams('G1')).toEqual([]);
       expect(ackNames()).toEqual(['ok_hand', 'ok_hand']);
     });
 
@@ -141,7 +149,7 @@ describe('Slack app', () => {
       await setup('G1', 'group', 'team creator-team');
       await setup('G1', 'group', 'what are you set to?');
 
-      expect(store.channelTeam('G1')).toBe('creator-team');
+      expect(store.channelTeams('G1')).toEqual(['creator-team']);
       expect(ackNames()).toEqual(['ok_hand', 'question']);
     });
 
@@ -162,14 +170,14 @@ describe('Slack app', () => {
       });
       await message({ type: 'message', subtype: 'bot_message', channel: 'G1', channel_type: 'group', ts: '999.9', text });
 
-      expect(store.channelTeam('G1')).toBeNull();
+      expect(store.channelTeams('G1')).toEqual([]);
       expect(acks).toEqual([]);
     });
 
     it('ignores a message that mentions someone else', async () => {
       await post('G1', 'group', '<@USOMEONE> team creator-team');
 
-      expect(store.channelTeam('G1')).toBeNull();
+      expect(store.channelTeams('G1')).toEqual([]);
       expect(acks).toEqual([]);
     });
 
@@ -185,7 +193,7 @@ describe('Slack app', () => {
         };
       }
 
-      expect(store.channelTeam('G1')).toBe('creator-team');
+      expect(store.channelTeams('G1')).toEqual(['creator-team']);
     });
   });
 

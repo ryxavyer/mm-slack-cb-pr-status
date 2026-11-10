@@ -36,8 +36,16 @@ starts with the bot's mention:
 
 ```
 @CB PR Status team creator-team     ← GitHub team slug; org/ prefix optional
+@CB PR Status team monetization-team creator-team   ← several teams
 @CB PR Status team none             ← back to no team
 ```
+
+Each message replaces the channel's whole list. A channel with several teams
+treats them as one: a code owner line is the channel's if it names any of them.
+That suits a subteam whose members all belong to the parent team too, such as
+monetization-team inside creator-team. If only some of the channel can review
+for a team, listing it means the rest see `:please:` for a review they can't
+give; leaving it out means those who can see the badge while it's still needed.
 
 The slug is the team's name as the codeowner bot writes it (`@multimediallc/creator-team`
 → `creator-team`). The bot reacts `:ok_hand:` when it's saved and `:question:` if it

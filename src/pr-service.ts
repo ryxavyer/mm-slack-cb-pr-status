@@ -76,13 +76,13 @@ export class PrService {
   }
 
   /**
-   * Sets (or clears, with null) the GitHub team a channel represents, then
+   * Sets (or clears, with none) the GitHub teams a channel represents, then
    * re-reconciles the messages already tracked there so the change shows
    * straight away.
    */
-  async setChannelTeam(channelId: string, team: string | null): Promise<void> {
-    this.store.setChannelTeam(channelId, team);
-    this.logger.info({ channel: channelId, team }, 'channel team updated');
+  async setChannelTeams(channelId: string, teams: readonly string[]): Promise<void> {
+    this.store.setChannelTeams(channelId, teams);
+    this.logger.info({ channel: channelId, teams }, 'channel team updated');
 
     for (const messageTs of this.store.messageTsInChannel(channelId)) {
       try {
