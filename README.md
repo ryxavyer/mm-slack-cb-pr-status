@@ -15,7 +15,7 @@ whole; a channel set to a GitHub team also shows that team's part in it:
 | --------------------------------------------------------------------------- | -------------------- | --------------------- |
 | Nobody has reviewed yet (the author's, bots' and the codeowner bot's don't count) | `:please:` (custom) | `:please:`          |
 | Someone reviewed; the team is listed but its line isn't ticked              | *(none)*             | `:please:`            |
-| The team's line is ticked; other code owners still outstanding              | *(none)*             | `:blue_check_mark:` (custom) |
+| The team's line is ticked; other code owners still outstanding              | *(none)*             | `:codeowner-approved-large:` (custom) |
 | The team's line is ticked; nothing else outstanding; "found 1 of 2"         | *(none)*             | `:1of2:` (custom)     |
 | Someone reviewed; the team isn't listed, or the codeowner bot hasn't commented | *(none)*          | *(none)*              |
 | The codeowner bot says the whole PR is satisfied                            | `:white_check_mark:` | `:white_check_mark:`  |
@@ -27,7 +27,7 @@ The last three rows outrank everything else. A ticked line includes an "or" line
 another team satisfied: the codeowner bot no longer needs this team for it.
 
 `:white_check_mark:` means the same thing everywhere: ready to merge.
-`:blue_check_mark:` only ever speaks for the channel's own team — other code
+`:codeowner-approved-large:` only ever speaks for the channel's own team — other code
 owners may still be needed. When a message links several PRs, it shows the one
 furthest from done.
 

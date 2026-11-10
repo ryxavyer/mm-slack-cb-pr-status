@@ -15,7 +15,7 @@ const emoji: EmojiConfig = {
   changesRequested: 'request-changes',
   noReviews: 'please',
   partial: '1of2',
-  teamDone: 'blue_check_mark',
+  teamDone: 'codeowner-approved-large',
   approved: 'white_check_mark',
   merged: 'merged',
   closed: 'x',
@@ -157,7 +157,7 @@ describe('emojiForState', () => {
     expect(emojiForState('in_review', emoji)).toBeNull();
     expect(emojiForState('changes_requested', emoji)).toBe('request-changes');
     expect(emojiForState('partial', emoji)).toBe('1of2');
-    expect(emojiForState('team_done', emoji)).toBe('blue_check_mark');
+    expect(emojiForState('team_done', emoji)).toBe('codeowner-approved-large');
     expect(emojiForState('approved', emoji)).toBe('white_check_mark');
     expect(emojiForState('merged', emoji)).toBe('merged');
     expect(emojiForState('closed', emoji)).toBe('x');
@@ -295,7 +295,7 @@ describe('managedEmojis', () => {
       'please',
       'request-changes',
       '1of2',
-      'blue_check_mark',
+      'codeowner-approved-large',
       'white_check_mark',
       'merged',
       'x',
@@ -305,7 +305,7 @@ describe('managedEmojis', () => {
       'please',
       'request-changes',
       '1of2',
-      'blue_check_mark',
+      'codeowner-approved-large',
       'white_check_mark',
       'merged',
       'sleeping',

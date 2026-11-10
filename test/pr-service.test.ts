@@ -115,7 +115,7 @@ describe('PrService', () => {
       stage(ref, 'teamDone');
       await service.runCycle();
       expect(store.messageReaction(PLAIN, '111.1')).toBeNull();
-      expect(store.messageReaction(TEAM, '222.2')).toBe('blue_check_mark');
+      expect(store.messageReaction(TEAM, '222.2')).toBe('codeowner-approved-large');
 
       stage(ref, 'approved');
       await service.runCycle();
@@ -223,7 +223,7 @@ describe('PrService', () => {
       stage(ref, 'teamDone');
       await service.trackLinks(TEAM, '111.1', [ref]);
 
-      expect(names()).toEqual(['add:blue_check_mark']);
+      expect(names()).toEqual(['add:codeowner-approved-large']);
     });
 
     it('keeps asking the team while it still owes a review, though someone else has reviewed', async () => {
@@ -242,7 +242,7 @@ describe('PrService', () => {
       await service.trackLinks(TEAM, '222.2', [ref]);
 
       expect(store.messageReaction(PLAIN, '111.1')).toBeNull();
-      expect(store.messageReaction(TEAM, '222.2')).toBe('blue_check_mark');
+      expect(store.messageReaction(TEAM, '222.2')).toBe('codeowner-approved-large');
     });
   });
 
@@ -253,12 +253,12 @@ describe('PrService', () => {
       expect(reactions.calls).toEqual([]);
 
       await service.setChannelTeam('C_OTHER', 'creator-team');
-      expect(names()).toEqual(['add:blue_check_mark']);
+      expect(names()).toEqual(['add:codeowner-approved-large']);
 
       // Clearing it goes back to the plain view.
       reactions.calls.length = 0;
       await service.setChannelTeam('C_OTHER', null);
-      expect(names()).toEqual(['remove:blue_check_mark']);
+      expect(names()).toEqual(['remove:codeowner-approved-large']);
       expect(store.channelTeam('C_OTHER')).toBeNull();
     });
   });
@@ -387,8 +387,8 @@ describe('PrService', () => {
       expect(names()).toEqual([
         'add:please',
         'remove:please',
-        'add:blue_check_mark',
-        'remove:blue_check_mark',
+        'add:codeowner-approved-large',
+        'remove:codeowner-approved-large',
         'add:white_check_mark',
         'remove:white_check_mark',
         'add:merged',

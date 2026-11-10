@@ -268,7 +268,7 @@ describe('Reconciler', () => {
       store.linkMessage(pr.id, 'C1', '111.1');
 
       await reconciler.reconcilePr(teamDone());
-      expect(reactions.calls.map((c) => c.name)).toEqual(['blue_check_mark']);
+      expect(reactions.calls.map((c) => c.name)).toEqual(['codeowner-approved-large']);
     });
 
     it('keeps asking a team still pending, even once review is under way', async () => {

@@ -21,7 +21,7 @@ const emoji: EmojiConfig = {
   changesRequested: process.env['EMOJI_CHANGES_REQUESTED'] ?? 'request-changes',
   noReviews: process.env['EMOJI_NO_REVIEWS'] ?? 'please',
   partial: process.env['EMOJI_PARTIAL'] ?? '1of2',
-  teamDone: process.env['EMOJI_TEAM_DONE'] ?? 'blue_check_mark',
+  teamDone: process.env['EMOJI_TEAM_DONE'] ?? 'codeowner-approved-large',
   approved: process.env['EMOJI_APPROVED'] ?? 'white_check_mark',
   merged: process.env['EMOJI_MERGED'] ?? 'merged',
   closed: process.env['EMOJI_CLOSED'] ?? 'x',

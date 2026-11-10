@@ -27,7 +27,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
       changesRequested: 'request-changes',
       noReviews: 'please',
       partial: '1of2',
-      teamDone: 'blue_check_mark',
+      teamDone: 'codeowner-approved-large',
       approved: 'white_check_mark',
       merged: 'merged',
       closed: 'x',

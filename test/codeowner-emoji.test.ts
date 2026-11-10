@@ -17,7 +17,7 @@ const emoji: EmojiConfig = {
   changesRequested: 'request-changes',
   noReviews: 'please',
   partial: '1of2',
-  teamDone: 'blue_check_mark',
+  teamDone: 'codeowner-approved-large',
   approved: 'white_check_mark',
   merged: 'merged',
   closed: 'x',
@@ -101,7 +101,7 @@ describe('codeowner comment -> Slack reaction', () => {
     });
 
     it('tells the team that signed off it is done, and asks the team that has not', () => {
-      expect(reactionFor(body, 'messaging-pod')).toBe('blue_check_mark');
+      expect(reactionFor(body, 'messaging-pod')).toBe('codeowner-approved-large');
       expect(reactionFor(body, 'creator-team')).toBe('please');
     });
   });
@@ -149,7 +149,7 @@ describe('codeowner comment -> Slack reaction', () => {
     });
 
     it('credits the OR group’s other team, but asks a team with its own rule pending', () => {
-      expect(reactionFor(body, 'creator-team')).toBe('blue_check_mark');
+      expect(reactionFor(body, 'creator-team')).toBe('codeowner-approved-large');
       expect(reactionFor(body, 'viewer-team')).toBe('please');
     });
   });
@@ -177,7 +177,7 @@ describe('codeowner comment -> Slack reaction', () => {
         '- Minimum review requirement not met. Need 2 reviews, found 1.',
       ].join('\n');
 
-      expect(reactionFor(withOther, 'viewer-team')).toBe('blue_check_mark');
+      expect(reactionFor(withOther, 'viewer-team')).toBe('codeowner-approved-large');
       expect(reactionFor(withOther, 'platform-team')).toBe('please');
       expect(reactionFor(withOther)).toBeNull();
     });
