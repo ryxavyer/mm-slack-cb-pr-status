@@ -347,6 +347,16 @@ describe('PrService', () => {
       expect(reactions.calls).toEqual([]);
     });
 
+    it('reports GitHub requests and unchanged answers when the client counts them', async () => {
+      stage(ref, 'waiting');
+      await service.trackLinks(PLAIN, '111.1', [ref]);
+
+      expect(await service.runCycle()).not.toHaveProperty('githubRequests');
+
+      Object.assign(github, { takeRequestStats: () => ({ requests: 3, notModified: 2 }) });
+      expect(await service.runCycle()).toMatchObject({ githubRequests: 3, notModified: 2 });
+    });
+
     it('reads only the configured codeowner bot, and does not count its reviews as someone looking', async () => {
       build({ codeownerBotLogin: 'review-bot' });
       stage(ref, 'waiting');

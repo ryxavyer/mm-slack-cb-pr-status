@@ -1,6 +1,7 @@
 import { Octokit } from 'octokit';
 import type { CodeownerStatus, PrRef } from '../types.js';
 import { parseCodeownerComment } from './codeowner-comment.js';
+import { EtagCache, type RequestFn, type RequestStats } from './etag-cache.js';
 import { countChangesRequested, hasHumanReview } from './reviews.js';
 
 /** What a poll needs to know about a PR. */
@@ -44,6 +45,8 @@ export interface GitHubClient {
   /** `ignoreReviewers` are logins whose reviews don't count as someone having looked. */
   fetchPrStatus(ref: PrRef, ignoreReviewers?: readonly string[]): Promise<PrStatus>;
   fetchCodeownerStatus(ref: PrRef, botLogin: string): Promise<CodeownerStatus | null>;
+  /** GitHub requests made since the last call, if the client counts them. */
+  takeRequestStats?(): RequestStats;
 }
 
 function statusCode(error: unknown): number | undefined {
@@ -101,13 +104,24 @@ export function classifyError(error: unknown): UnreachableReason | null {
 
 export class OctokitGitHubClient implements GitHubClient {
   private readonly octokit: Octokit;
+  private readonly etags = new EtagCache();
 
-  constructor(options: { token: string; baseUrl?: string; userAgent?: string }) {
+  /** `fetch` replaces the network, for tests. */
+  constructor(options: { token: string; baseUrl?: string; userAgent?: string; fetch?: typeof fetch }) {
     this.octokit = new Octokit({
       auth: options.token,
       baseUrl: options.baseUrl ?? 'https://api.github.com',
       userAgent: options.userAgent ?? 'mm-slack-cb-pr-status',
+      ...(options.fetch ? { request: { fetch: options.fetch } } : {}),
     });
+    // Unchanged answers come back from the cache without using rate limit.
+    this.octokit.hook.wrap('request', (request, options) =>
+      this.etags.request(request as RequestFn, options, this.octokit.request.endpoint.parse(options)),
+    );
+  }
+
+  takeRequestStats(): RequestStats {
+    return this.etags.takeStats();
   }
 
   /**

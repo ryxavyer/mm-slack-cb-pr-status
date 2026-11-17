@@ -211,7 +211,18 @@ its reactions and stops tracking those PRs.
 ## Capacity
 
 Each poll cycle makes ~3 GitHub requests per tracked open PR (the PR, a page
-of reviews, a page of comments for the codeowner bot's verdict). At 20 open PRs
-on a 90-second interval that is ~2,400 requests/hour
-against a 5,000/hour authenticated limit. If you ever approach it, raise
-`POLL_INTERVAL_SECONDS` — the only cost is a slower emoji update.
+of reviews, a page of comments for the codeowner bot's verdict), against a
+5,000/hour limit shared by everything using the same token.
+
+Every request is conditional: the bot sends back the ETag GitHub gave it last
+time, and an unchanged resource answers 304, which doesn't count against the
+limit. So only PRs that changed since the last cycle cost anything, plus one
+full refetch of each PR every 30 minutes as a safety net (~6 requests/hour per
+PR). Several hundred open PRs fit comfortably. The cache is in memory, so the
+first cycle after a restart makes full requests.
+
+Each `poll cycle complete` line shows `githubRequests` and `notModified` (the
+ones that were free). If `notModified` stays near zero, conditional requests
+aren't working. If you ever approach the limit, raise `POLL_INTERVAL_SECONDS`;
+the only cost is a slower emoji update. `previous poll cycle still running`
+means the interval is shorter than a cycle takes (~0.5s per tracked PR).

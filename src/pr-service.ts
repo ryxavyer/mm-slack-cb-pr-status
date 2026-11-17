@@ -15,6 +15,9 @@ export interface CycleSummary {
   cleaned: number;
   /** PRs given up on because they stayed unreachable past the TTL. */
   retired: number;
+  /** GitHub GET requests this cycle, and how many came back unchanged (free of rate limit). */
+  githubRequests?: number;
+  notModified?: number;
 }
 
 /**
@@ -187,6 +190,12 @@ export class PrService {
     const { expired, retired } = await this.cleanup();
     summary.cleaned = expired;
     summary.retired = retired;
+
+    const requests = this.github.takeRequestStats?.();
+    if (requests) {
+      summary.githubRequests = requests.requests;
+      summary.notModified = requests.notModified;
+    }
     return summary;
   }
 

@@ -53,7 +53,7 @@ One long-running Node/TypeScript process. No inbound HTTP at all:
 
 - No public endpoint → no webhook signature verification, no ingress config, nothing to secure.
 - No org-level GitHub webhook approval process to go through.
-- We only poll PRs we're actively tracking (open PRs linked in the channel), so API usage is tiny: ~N requests per poll cycle for N open tracked PRs. A team channel realistically has < 20 open at once → well under rate limits (5,000/hr authenticated).
+- We only poll PRs we're actively tracking (open PRs linked in the channel), and every request is conditional: an unchanged PR answers 304, which doesn't count against GitHub's rate limit (5,000/hr). Usage scales with PR activity, not with how many are open. See deploy/RUNBOOK.md → Capacity.
 - Cost: status updates lag by up to one poll interval (60–120s). Acceptable for this use case.
 
 ## Tech stack

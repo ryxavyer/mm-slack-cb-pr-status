@@ -28,6 +28,8 @@ vi.mock('octokit', () => ({
     paginate(list: () => Promise<unknown[]>) {
       return list();
     }
+    // Conditional requests are covered against the real Octokit in github-etag.test.ts.
+    hook = { wrap() {} };
   },
 }));
 
